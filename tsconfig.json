@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "rootDir": ".",
+    "types": [
+      "node"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "fluxplugin": [
+        "src/core/index.ts"
+      ],
+      "fluxplugin/main": [
+        "src/main/index.ts"
+      ],
+      "fluxplugin/preload": [
+        "src/preload/index.ts"
+      ],
+      "fluxplugin/react": [
+        "src/react/index.ts"
+      ],
+      "fluxplugin/manager-ui": [
+        "src/manager-ui/index.tsx"
+      ],
+      "fluxplugin/cli": [
+        "src/cli/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "tests"
+  ]
+}

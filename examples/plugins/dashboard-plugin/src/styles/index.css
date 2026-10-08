@@ -1,0 +1,2 @@
+.dw-card{border:1px solid var(--flux-border);border-radius:12px;padding:16px;margin:12px 0;background:var(--flux-surface)}
+.dw-btn{background:var(--flux-accent);color:#fff;border:0;border-radius:8px;padding:6px 12px;cursor:pointer}

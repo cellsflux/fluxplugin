@@ -1,0 +1,10 @@
+body { margin: 0; font: 14px system-ui; background: var(--flux-bg); color: var(--flux-fg); }
+.app { display: grid; grid-template-rows: var(--flux-titlebar-h, 40px) 1fr; min-height: 100vh; }
+.body { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+.side { border-right: 1px solid var(--flux-border); padding: 16px; background: var(--flux-surface); }
+.side a { display: block; padding: 7px 10px; border-radius: 8px; color: inherit; text-decoration: none; margin: 2px 0; }
+.side a[data-active] { background: var(--flux-accent); color: #fff; }
+.main { padding: 24px; max-width: 860px; overflow: auto; }
+.row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.btn { border: 1px solid var(--flux-border); background: var(--flux-bg); color: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+.hint { color: var(--flux-muted); font-size: 12px; }

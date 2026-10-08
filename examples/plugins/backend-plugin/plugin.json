@@ -1,0 +1,44 @@
+{
+  "id": "com.example.stats",
+  "name": "Stats Service",
+  "version": "1.2.0",
+  "description": "Main + renderer plugin: validated IPC, preload API, pushed events and a typed config.",
+  "author": "fluxplugin examples",
+  "main": "./dist/main.mjs",
+  "renderer": "./dist/renderer.js",
+  "styles": [
+    "./dist/index.css"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": [
+    "ipc",
+    "services",
+    "events",
+    "routes",
+    "menus",
+    "ui",
+    "commands",
+    "styles",
+    "storage"
+  ],
+  "engines": {
+    "fluxplugin": "^1.0.0"
+  },
+  "license": "MIT",
+  "icon": "./assets/icon.svg",
+  "readme": "./README.md",
+  "categories": [
+    "Data",
+    "Developer tools"
+  ],
+  "keywords": [
+    "ipc",
+    "main-process",
+    "stats"
+  ],
+  "links": {
+    "docs": "https://www.npmjs.com/package/fluxplugin"
+  }
+}

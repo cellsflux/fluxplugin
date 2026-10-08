@@ -1,0 +1,19 @@
+/* Tailwind v4, compiled by `fluxplugin dev|build` to dist/tailwind.css.
+   Colors come from the theme variables, so Tailwind utilities follow light / dark / plugin themes automatically:
+   use bg-surface, text-fg, border-border, text-muted, bg-accent … */
+@import "tailwindcss";
+
+/* Plugins are shipped as built JS: scan their dist so the classes they use are generated. Plugins that users install later
+   should ship their own precompiled CSS (fluxplugin plugin new my-plugin --tailwindcss). */
+@source "../../../../plugins/*/dist";
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@theme inline {
+  --color-bg: var(--flux-bg);
+  --color-fg: var(--flux-fg);
+  --color-surface: var(--flux-surface);
+  --color-border: var(--flux-border);
+  --color-accent: var(--flux-accent);
+  --color-muted: var(--flux-muted);
+}

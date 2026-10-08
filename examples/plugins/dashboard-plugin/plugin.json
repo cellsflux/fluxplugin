@@ -1,0 +1,40 @@
+{
+  "id": "com.example.dashboard",
+  "name": "Dashboard Widgets",
+  "version": "1.0.0",
+  "description": "Renderer-only plugin: a lazy route, a dashboard widget, a toolbar action and scoped styles.",
+  "author": "fluxplugin examples",
+  "renderer": "./dist/renderer.js",
+  "styles": [
+    "./dist/index.css"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": [
+    "routes",
+    "menus",
+    "ui",
+    "commands",
+    "styles"
+  ],
+  "engines": {
+    "fluxplugin": "^1.0.0"
+  },
+  "license": "MIT",
+  "icon": "./assets/icon.svg",
+  "readme": "./README.md",
+  "categories": [
+    "Productivity",
+    "UI"
+  ],
+  "keywords": [
+    "dashboard",
+    "widget",
+    "toolbar"
+  ],
+  "links": {
+    "docs": "https://www.npmjs.com/package/fluxplugin"
+  },
+  "video": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}

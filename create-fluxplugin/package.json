@@ -1,0 +1,10 @@
+{
+  "name": "create-fluxplugin",
+  "version": "1.0.0",
+  "description": "npm create fluxplugin@latest my-app — scaffold an Electron + React app with a plugin architecture.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "create-fluxplugin": "./index.js" },
+  "files": ["index.js"],
+  "dependencies": { "fluxplugin": "^1.0.0" }
+}

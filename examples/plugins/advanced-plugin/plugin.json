@@ -1,0 +1,47 @@
+{
+  "id": "com.example.students",
+  "name": "Students Pro",
+  "version": "0.9.0",
+  "description": "Advanced: hooks, events, services, guards, layout, extension points, dependency on Stats.",
+  "author": "fluxplugin examples",
+  "main": "./dist/main.mjs",
+  "renderer": "./dist/renderer.js",
+  "styles": [
+    "./dist/index.css"
+  ],
+  "activationEvents": [
+    "onStartup"
+  ],
+  "dependencies": {
+    "com.example.stats": "^1.0.0"
+  },
+  "permissions": [
+    "hooks",
+    "events",
+    "services",
+    "ipc",
+    "routes",
+    "menus",
+    "ui",
+    "commands",
+    "styles"
+  ],
+  "engines": {
+    "fluxplugin": "^1.0.0"
+  },
+  "license": "MIT",
+  "icon": "./assets/icon.svg",
+  "readme": "./README.md",
+  "categories": [
+    "Workflow"
+  ],
+  "keywords": [
+    "hooks",
+    "guards",
+    "layout"
+  ],
+  "links": {
+    "docs": "https://www.npmjs.com/package/fluxplugin"
+  },
+  "video": "https://youtu.be/dQw4w9WgXcQ"
+}

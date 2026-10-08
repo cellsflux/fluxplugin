@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.base.json", "compilerOptions": { "noEmit": false, "emitDeclarationOnly": true, "declaration": true, "composite": false, "outDir": "dist/types", "rootDir": "src", "types": ["node"] }, "include": ["src"] }
