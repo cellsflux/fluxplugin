@@ -1,6 +1,6 @@
 {
   "name": "fluxplugin",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Plugin architecture for Electron + React + TypeScript. Build apps that others can extend: routes, menus, commands, UI slots, IPC, hooks, permissions — with a CLI.",
   "license": "MIT",
   "keywords": [
