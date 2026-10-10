@@ -1,31 +1,111 @@
 {
   "name": "fluxplugin",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Plugin architecture for Electron + React + TypeScript. Build apps that others can extend: routes, menus, commands, UI slots, IPC, hooks, permissions — with a CLI.",
   "license": "MIT",
-  "keywords": ["electron", "react", "plugin", "plugins", "extensions", "architecture", "typescript", "cli"],
+  "keywords": [
+    "electron",
+    "react",
+    "plugin",
+    "plugins",
+    "extensions",
+    "architecture",
+    "typescript",
+    "cli"
+  ],
   "type": "module",
   "sideEffects": false,
-  "bin": { "fluxplugin": "./dist/cli.js" },
-  "exports": {
-    ".": { "types": "./dist/types/core/index.d.ts", "browser": "./dist/browser/index.js", "default": "./dist/node/index.js" },
-    "./main": { "types": "./dist/types/main/index.d.ts", "default": "./dist/node/main.js" },
-    "./preload": { "types": "./dist/types/preload/index.d.ts", "default": "./dist/node/preload.js" },
-    "./cli": { "types": "./dist/types/cli/index.d.ts", "default": "./dist/node/cli-api.js" },
-    "./react": { "types": "./dist/types/react/index.d.ts", "default": "./dist/browser/react.js" },
-    "./manager-ui": { "types": "./dist/types/manager-ui/index.d.ts", "default": "./dist/browser/manager-ui.js" }
+  "bin": {
+    "fluxplugin": "./dist/cli.js"
   },
-  "typesVersions": { "*": { "main": ["dist/types/main/index.d.ts"], "preload": ["dist/types/preload/index.d.ts"], "cli": ["dist/types/cli/index.d.ts"], "react": ["dist/types/react/index.d.ts"], "manager-ui": ["dist/types/manager-ui/index.d.ts"] } },
-  "files": ["dist", "README.md", "docs", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "exports": {
+    ".": {
+      "types": "./dist/types/core/index.d.ts",
+      "browser": "./dist/browser/index.js",
+      "default": "./dist/node/index.js"
+    },
+    "./main": {
+      "types": "./dist/types/main/index.d.ts",
+      "default": "./dist/node/main.js"
+    },
+    "./preload": {
+      "types": "./dist/types/preload/index.d.ts",
+      "default": "./dist/node/preload.js"
+    },
+    "./cli": {
+      "types": "./dist/types/cli/index.d.ts",
+      "default": "./dist/node/cli-api.js"
+    },
+    "./react": {
+      "types": "./dist/types/react/index.d.ts",
+      "default": "./dist/browser/react.js"
+    },
+    "./manager-ui": {
+      "types": "./dist/types/manager-ui/index.d.ts",
+      "default": "./dist/browser/manager-ui.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "main": [
+        "dist/types/main/index.d.ts"
+      ],
+      "preload": [
+        "dist/types/preload/index.d.ts"
+      ],
+      "cli": [
+        "dist/types/cli/index.d.ts"
+      ],
+      "react": [
+        "dist/types/react/index.d.ts"
+      ],
+      "manager-ui": [
+        "dist/types/manager-ui/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
-  "dependencies": { "esbuild": "^0.28.0" },
-  "peerDependencies": { "react": ">=18", "react-dom": ">=18", "electron": ">=25" },
-  "peerDependenciesMeta": { "react": { "optional": true }, "react-dom": { "optional": true }, "electron": { "optional": true } },
-  "devDependencies": { "@types/node": "^22.10.0", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "jsdom": "^26.0.0", "react": "^19.0.0", "react-dom": "^19.0.0", "typescript": "~5.9.3", "vitest": "^3.2.7" }
+  "dependencies": {
+    "esbuild": "^0.28.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "electron": ">=25"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "electron": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^26.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
+  }
 }
