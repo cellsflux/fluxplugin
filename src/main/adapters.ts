@@ -8,14 +8,8 @@ import type { MainFramework } from "./framework.js";
 
 /** Minimal structural types so this package never imports `electron` (works with any Electron version). */
 export interface IpcMainLike {
-  handle(
-    channel: string,
-    listener: (event: { sender: { id: number } }, ...args: any[]) => unknown,
-  ): void;
-  on(
-    channel: string,
-    listener: (event: { sender: { id: number } }, ...args: any[]) => void,
-  ): void;
+  handle(channel: string, listener: (event: { sender: { id: number } }, ...args: any[]) => unknown): void;
+  on(channel: string, listener: (event: { sender: { id: number } }, ...args: any[]) => void): void;
   removeHandler(channel: string): void;
   removeListener(channel: string, listener: (...args: any[]) => void): void;
 }
@@ -33,19 +27,12 @@ export interface ElectronLike {
  * Connects the framework to Electron's ipcMain. Call after `app.whenReady()`.
  * Returns a detach function.
  */
-export function attachElectron(
-  fw: MainFramework,
-  electron: ElectronLike,
-): () => void {
+export function attachElectron(fw: MainFramework, electron: ElectronLike): () => void {
   const { ipcMain, webContents } = electron;
-  ipcMain.handle(CHANNELS.invoke, (e, req: InvokeRequest) =>
-    fw.handleInvoke(req, e.sender.id),
-  );
+  ipcMain.handle(CHANNELS.invoke, (e, req: InvokeRequest) => fw.handleInvoke(req, e.sender.id));
   ipcMain.handle(CHANNELS.bootstrap, () => fw.bootstrap());
-  const onSend = (
-    e: { sender: { id: number } },
-    msg: { channel: string; payload?: unknown; caller?: string },
-  ) => fw.handleSend(msg?.channel, msg?.payload, msg?.caller, e.sender.id);
+  const onSend = (e: { sender: { id: number } }, msg: { channel: string; payload?: unknown; caller?: string }) =>
+    fw.handleSend(msg?.channel, msg?.payload, msg?.caller, e.sender.id);
   ipcMain.on(CHANNELS.send, onSend);
   const off = fw.onBroadcast((channel, payload, target) => {
     for (const wc of webContents.getAllWebContents()) {
@@ -65,13 +52,7 @@ export function attachElectron(
 /** Privileged scheme definition. Must be passed to `protocol.registerSchemesAsPrivileged` *before* `app.ready`. */
 export const PLUGIN_SCHEME = {
   scheme: "fluxplugin",
-  privileges: {
-    standard: true,
-    secure: true,
-    supportFetchAPI: true,
-    corsEnabled: true,
-    stream: true,
-  },
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
 } as const;
 
 const MIME: Record<string, string> = {
@@ -95,10 +76,7 @@ const MIME: Record<string, string> = {
  * Resolves `fluxplugin://<id>/<path>` to a file inside the plugin's directory. Rejects traversal and anything that
  * is not an asset (the manifest and main entry are never served).
  */
-export async function resolvePluginAsset(
-  fw: MainFramework,
-  url: string,
-): Promise<{ file: string; mime: string } | null> {
+export async function resolvePluginAsset(fw: MainFramework, url: string): Promise<{ file: string; mime: string } | null> {
   let u: URL;
   try {
     u = new URL(url);
@@ -128,19 +106,12 @@ export async function resolvePluginAsset(
 /** Registers the `fluxplugin://` handler on an Electron `protocol` object (`protocol.handle`, Electron >= 25). */
 export function registerPluginProtocol(
   fw: MainFramework,
-  protocol: {
-    handle(
-      scheme: string,
-      handler: (req: { url: string }) => Promise<Response> | Response,
-    ): void;
-  },
+  protocol: { handle(scheme: string, handler: (req: { url: string }) => Promise<Response> | Response): void },
 ): void {
   protocol.handle(PLUGIN_SCHEME.scheme, async (req) => {
     const r = await resolvePluginAsset(fw, req.url);
     if (!r) return new Response("Not found", { status: 404 });
-    return new Response(await fs.readFile(r.file), {
-      headers: { "content-type": r.mime, "access-control-allow-origin": "*" },
-    });
+    return new Response(await fs.readFile(r.file), { headers: { "content-type": r.mime, "access-control-allow-origin": "*" } });
   });
 }
 
@@ -152,10 +123,7 @@ export interface HttpAdapterOptions {
   /** URL prefix under which plugin assets are served. Default `/@plugins`. */
   assetPrefix?: string;
   /** Extra request handler (e.g. serve the Vite build). Return true when handled. */
-  fallback?: (
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-  ) => boolean | Promise<boolean>;
+  fallback?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean | Promise<boolean>;
 }
 
 /**
@@ -163,10 +131,7 @@ export interface HttpAdapterOptions {
  * GET /@plugins/<id>/<file>). Used for browser-based development, headless E2E tests and screenshots.
  * Bind to loopback only: there is no authentication, exactly like the Electron-only bridge it replaces.
  */
-export function attachHttp(
-  fw: MainFramework,
-  opts: HttpAdapterOptions = {},
-): Promise<{ server: http.Server; port: number; close(): Promise<void> }> {
+export function attachHttp(fw: MainFramework, opts: HttpAdapterOptions = {}): Promise<{ server: http.Server; port: number; close(): Promise<void> }> {
   const prefix = opts.assetPrefix ?? "/@plugins";
   const clients = new Set<http.ServerResponse>();
   const off = fw.onBroadcast((channel, payload) => {
@@ -196,25 +161,15 @@ export function attachHttp(
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (url.pathname === "/flux/bootstrap")
-        return json(res, 200, fw.bootstrap());
-      if (url.pathname === "/flux/invoke" && req.method === "POST")
-        return json(
-          res,
-          200,
-          await fw.handleInvoke(await readJson(req), "http"),
-        );
+      if (url.pathname === "/flux/bootstrap") return json(res, 200, fw.bootstrap());
+      if (url.pathname === "/flux/invoke" && req.method === "POST") return json(res, 200, await fw.handleInvoke(await readJson(req), "http"));
       if (url.pathname === "/flux/send" && req.method === "POST") {
         const m = await readJson(req);
         fw.handleSend(m.channel, m.payload, m.caller, "http");
         return json(res, 200, { ok: true });
       }
       if (url.pathname === "/flux/events") {
-        res.writeHead(200, {
-          "content-type": "text/event-stream",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        });
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
         res.write(": connected\n\n");
         clients.add(res);
         req.on("close", () => clients.delete(res));
@@ -224,15 +179,9 @@ export function attachHttp(
         const rest = url.pathname.slice(prefix.length + 1);
         const slash = rest.indexOf("/");
         const id = decodeURIComponent(rest.slice(0, slash));
-        const r = await resolvePluginAsset(
-          fw,
-          `fluxplugin://${encodeURIComponent(id)}/${rest.slice(slash + 1)}`,
-        );
+        const r = await resolvePluginAsset(fw, `fluxplugin://${encodeURIComponent(id)}/${rest.slice(slash + 1)}`);
         if (!r) return json(res, 404, { error: "not found" });
-        res.writeHead(200, {
-          "content-type": r.mime,
-          "cache-control": "no-store",
-        });
+        res.writeHead(200, { "content-type": r.mime, "cache-control": "no-store" });
         return res.end(await fs.readFile(r.file));
       }
       if (opts.fallback && (await opts.fallback(req, res))) return;
@@ -264,30 +213,19 @@ export function attachHttp(
  * In-process bridge connecting a renderer runtime directly to a `MainFramework` (no IPC, no serialization
  * except a JSON round trip to mimic structured cloning). Used by integration tests and storybook-like setups.
  */
-export function createLoopbackBridge(
-  fw: MainFramework,
-): import("../core/index.js").FluxBridge {
-  const clone = <T>(v: T): T =>
-    v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
+export function createLoopbackBridge(fw: MainFramework): import("../core/index.js").FluxBridge {
+  const clone = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   fw.onBroadcast((channel, payload) => {
     for (const l of [...(listeners.get(channel) ?? [])]) l(clone(payload));
   });
   return {
     async invoke(channel, input, caller) {
-      const res = await fw.handleInvoke(
-        { channel, input: clone(input), caller },
-        "loopback",
-      );
-      if (!res.ok)
-        throw Object.assign(new Error(res.error.message), {
-          code: res.error.code,
-          payload: res.error,
-        });
+      const res = await fw.handleInvoke({ channel, input: clone(input), caller }, "loopback");
+      if (!res.ok) throw Object.assign(new Error(res.error.message), { code: res.error.code, payload: res.error });
       return clone(res.value);
     },
-    send: (channel, payload, caller) =>
-      fw.handleSend(channel, clone(payload), caller, "loopback"),
+    send: (channel, payload, caller) => fw.handleSend(channel, clone(payload), caller, "loopback"),
     on(channel, l) {
       let set = listeners.get(channel);
       if (!set) listeners.set(channel, (set = new Set()));

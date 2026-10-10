@@ -11,18 +11,18 @@ Renderer-only plugin: a lazy route, a dashboard widget, a toolbar action and sco
 
 ## How to use it
 
-1. Open **Plugins** and make sure _Dashboard Widgets_ is enabled.
+1. Open **Plugins** and make sure *Dashboard Widgets* is enabled.
 2. Look for its entries in the sidebar, the menu bar and the dashboard.
 3. Open the plugin's page in **Plugins → Details** to change its settings and read its logs.
 
 ## Permissions
 
-| Permission      | Why                                |
-| --------------- | ---------------------------------- |
-| `routes, menus` | its page and sidebar entry         |
-| `ui`            | widget + toolbar contribution      |
-| `commands`      | the refresh command                |
-| `styles`        | its own CSS, removed when disabled |
+| Permission | Why |
+| --- | --- |
+| `routes, menus` | its page and sidebar entry |
+| `ui` | widget + toolbar contribution |
+| `commands` | the refresh command |
+| `styles` | its own CSS, removed when disabled |
 
 ## Good to know
 
