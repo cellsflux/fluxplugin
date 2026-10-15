@@ -51,3 +51,22 @@ export function createHttpBridge(baseUrl = ""): FluxBridge {
     },
   };
 }
+
+/**
+ * Bridge for a static website export (`fluxplugin export`): reads `bootstrap.json` and has no main process behind it.
+ * Renderer-only plugins work; IPC calls reject with a clear message.
+ */
+export function createStaticBridge(bootstrapUrl = "./bootstrap.json"): FluxBridge {
+  return {
+    async invoke() {
+      throw new Error("This is a static website: main-process features (IPC, plugin management) are not available.");
+    },
+    send() {},
+    on() {
+      return () => {};
+    },
+    async bootstrap() {
+      return (await (await fetch(bootstrapUrl)).json()) as Bootstrap;
+    },
+  };
+}

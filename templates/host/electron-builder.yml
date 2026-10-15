@@ -1,0 +1,27 @@
+# Produces the installer/executable: `npm run dist` (current OS) or `npm run dist -- --win --mac --linux`.
+appId: com.example.__APP_ID__
+productName: __APP_NAME__
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+# Plugins are copied by `fluxplugin dist` into .flux-build/plugins with runtime files only (no src, no .ts, no sourcemaps).
+extraResources:
+  - from: .flux-build/plugins
+    to: plugins
+asar: true
+win:
+  target: [nsis]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # Plugins the user installed live in the app's data folder; this removes them with the app when it is uninstalled.
+  deleteAppDataOnUninstall: true
+mac:
+  target: [dmg, zip]
+  category: public.app-category.productivity
+linux:
+  target: [AppImage, deb]
+  category: Utility

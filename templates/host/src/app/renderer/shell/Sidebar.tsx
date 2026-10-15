@@ -1,17 +1,13 @@
-import { Link, useMenu } from "fluxplugin/react";
+import { SidebarNav, type SidebarEntry } from "fluxplugin/react";
+
+// Host entries. Plugins add theirs between the two groups (routes with meta.menu, or menus.register({ location: "sidebar" })),
+// including sub-menus: `meta.menu.parent` or `children`. Labels are translated through `menu.<id>`.
+const top: SidebarEntry[] = [{ id: "dashboard", label: "Dashboard", path: "/", icon: "home" }];
+const bottom: SidebarEntry[] = [
+  { id: "plugins", label: "Plugins", path: "/plugins", icon: "plug" },
+  { id: "settings", label: "Settings", path: "/settings", icon: "settings" },
+];
 
 export function Sidebar() {
-  const { items, run } = useMenu("sidebar"); // entries added by plugins (routes with meta.menu, or menus.register)
-  return (
-    <aside className="side">
-      <Link to="/">Dashboard</Link>
-      {items.map((i) => (
-        <a key={i.id} href={"#" + i.path} onClick={(e) => (e.preventDefault(), run(i))}>
-          {i.label}
-        </a>
-      ))}
-      <Link to="/plugins">Plugins</Link>
-      <p className="hint">Ctrl/Cmd+K: commands</p>
-    </aside>
-  );
+  return <SidebarNav top={top} bottom={bottom} footer={<span>Ctrl/Cmd+K: commands</span>} />;
 }

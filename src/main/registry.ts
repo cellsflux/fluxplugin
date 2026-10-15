@@ -19,7 +19,21 @@ export interface RegistryEntry {
   sha256?: string;
   homepage?: string;
   stars?: number;
-  icon?: string;
+  iconUrl?: string;
+  bannerUrl?: string;
+  screenshots?: string[];
+  video?: string;
+  categories?: string[];
+  keywords?: string[];
+  links?: Record<string, string>;
+  license?: string;
+  readme?: string;
+  /** Filled in by the app: version already installed locally. */
+  installedVersion?: string;
+  /** Folder entry: `location` is a folder URL; download `files` and verify them against `hashes`. */
+  folder?: boolean;
+  files?: string[];
+  hashes?: Record<string, string>;
 }
 
 /**
@@ -99,20 +113,99 @@ export async function copyDir(src: string, dest: string): Promise<void> {
   }
 }
 
-/** Shape of a store catalog (`index.json`). Used by HTTP stores, GitHub catalog stores and `fluxplugin store add`. */
+/** Shape of a store catalog: `{ "plugins": [...] }` or a bare array. Served as a file, built by `fluxplugin store build`, or returned by any API. */
+export interface StoreIndexPlugin {
+  id: string;
+  name?: string;
+  version: string;
+  description?: string;
+  author?: string;
+  permissions?: string[];
+  /** A package (.tgz)… */
+  url?: string;
+  sha256?: string;
+  /** …or a plugin folder in the repository / on the host, with its file list and sha256 of every file. */
+  folder?: string;
+  files?: string[];
+  hashes?: Record<string, string>;
+  homepage?: string;
+  license?: string;
+  icon?: string;
+  banner?: string;
+  screenshots?: string[];
+  video?: string;
+  categories?: string[];
+  keywords?: string[];
+  links?: Record<string, string>;
+  /** Markdown, inline (keep it short) */
+  readme?: string;
+}
 export interface StoreIndex {
-  plugins: { id: string; name?: string; version: string; description?: string; author?: string; permissions?: string[]; url: string; sha256?: string; homepage?: string; icon?: string }[];
+  plugins: StoreIndexPlugin[];
 }
 
-export function entriesFromIndex(index: StoreIndex, baseUrl: string, source: string, query = ""): RegistryEntry[] {
+export function entriesFromIndex(index: StoreIndex | StoreIndexPlugin[], baseUrl: string, source: string, query = ""): RegistryEntry[] {
+  const list = Array.isArray(index) ? index : (index?.plugins ?? []);
   const q = query.toLowerCase();
-  return (index.plugins ?? [])
-    .filter((p) => p && typeof p.id === "string" && typeof p.version === "string" && typeof p.url === "string")
-    .filter((p) => !q || `${p.id} ${p.name ?? ""} ${p.description ?? ""}`.toLowerCase().includes(q))
-    .map((p) => ({
-      id: p.id, name: p.name ?? p.id, version: p.version, description: p.description, author: p.author,
-      permissions: p.permissions ?? [], location: new URL(p.url, baseUrl).href, source, sha256: p.sha256, homepage: p.homepage, icon: p.icon,
-    }));
+  const abs = (u: string | undefined): string | undefined => {
+    if (!u) return undefined;
+    try {
+      return new URL(u, baseUrl).href;
+    } catch {
+      return undefined;
+    }
+  };
+  const out: RegistryEntry[] = [];
+  for (const p of list) {
+    if (!p || typeof p.id !== "string" || typeof p.version !== "string") continue;
+    const isFolder = typeof p.folder === "string" && Array.isArray(p.files);
+    if (typeof p.url !== "string" && !isFolder) continue;
+    if (q && !`${p.id} ${p.name ?? ""} ${p.description ?? ""} ${(p.keywords ?? []).join(" ")}`.toLowerCase().includes(q)) continue;
+    const folderUrl = isFolder ? (abs(p.folder!.endsWith("/") ? p.folder! : p.folder! + "/") as string) : undefined;
+    const location = isFolder ? folderUrl : abs(p.url!);
+    if (!location) continue;
+    out.push({
+      id: p.id, name: p.name ?? p.id, version: p.version, description: p.description, author: p.author, permissions: p.permissions ?? [],
+      location, source, sha256: p.sha256, homepage: p.homepage, license: p.license,
+      iconUrl: abs(p.icon), bannerUrl: abs(p.banner), screenshots: (p.screenshots ?? []).map((s) => abs(s)).filter((s): s is string => !!s),
+      video: p.video ? (p.video.startsWith("./") && folderUrl ? abs(new URL(p.video, folderUrl).href) : abs(p.video)) : undefined,
+      categories: p.categories, keywords: p.keywords, links: p.links, readme: p.readme,
+      folder: isFolder || undefined, files: isFolder ? p.files : undefined, hashes: p.hashes,
+    });
+  }
+  return out;
+}
+
+const SAFE_FILE = /^[\w@+.,() \-]+(\/[\w@+.,() \-]+)*$/;
+
+/** Downloads a plugin folder file by file, verifying every file against the catalog's sha256 (required). */
+export async function downloadFolder(entry: RegistryEntry, dest: string, get: (url: string) => Promise<Response>): Promise<void> {
+  const base = entry.location.endsWith("/") ? entry.location : entry.location + "/";
+  const files = entry.files ?? [];
+  if (!files.includes("plugin.json")) throw new Error("catalog entry does not list plugin.json");
+  if (files.length > 800) throw new Error("catalog entry lists too many files");
+  if (!entry.hashes) throw new Error("catalog entry has no file hashes; refusing to install an unverifiable folder (run `fluxplugin store build`)");
+  const root = path.resolve(dest);
+  await fs.mkdir(root, { recursive: true });
+  let total = 0;
+  const queue = [...files];
+  const worker = async (): Promise<void> => {
+    for (let f = queue.shift(); f !== undefined; f = queue.shift()) {
+      if (!SAFE_FILE.test(f) || f.split("/").some((s) => s === ".." || s === ".")) throw new Error(`unsafe file path in catalog: ${f}`);
+      const expected = entry.hashes![f];
+      if (!expected || !/^[0-9a-f]{64}$/.test(expected)) throw new Error(`no sha256 for ${f} in the catalog`);
+      const res = await get(base + f.split("/").map(encodeURIComponent).join("/"));
+      const buf = Buffer.from(await res.arrayBuffer());
+      total += buf.length;
+      if (total > 100 * 1024 * 1024) throw new Error("plugin is too large");
+      if (crypto.createHash("sha256").update(buf).digest("hex") !== expected) throw new Error(`${f} does not match the catalog checksum`);
+      const target = path.resolve(root, f);
+      if (!target.startsWith(root + path.sep)) throw new Error(`unsafe file path in catalog: ${f}`);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, buf);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
 }
 
 /** Removes everything that is not runtime code from an extracted plugin: sources, TypeScript, sourcemaps, node_modules. */
@@ -165,26 +258,41 @@ export class LocalRegistry implements PluginRegistry {
 }
 
 /**
- * HTTP registry: GET `<baseUrl>/index.json` → `{ plugins: [{ id, name, version, description, author, permissions, url, sha256 }] }`
- * where `url` points at a `.tgz` produced by `fluxplugin package`. Downloads are verified against `sha256` when given.
+ * HTTP/JSON store. `url` is either a folder holding `index.json` ("https://plugins.acme.com/") or a direct link to a JSON
+ * document / API endpoint that returns the catalog ("https://api.acme.com/plugins" or ".../plugins.json").
+ * Entries are packages (`url` → .tgz, checked against `sha256`) or plugin folders (`folder` + `files` + `hashes`).
  */
 export class HttpRegistry implements PluginRegistry {
   readonly name: string;
   constructor(
     private readonly baseUrl: string,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly headers: Record<string, string> = {},
+    private readonly direct = false,
   ) {
     this.name = `http:${baseUrl}`;
   }
+  /** Direct link (".json" file, or `direct: true` for an API endpoint) or a folder that contains index.json. */
+  private get catalogUrl(): string {
+    if (this.direct || new URL(this.baseUrl).pathname.toLowerCase().endsWith(".json")) return this.baseUrl;
+    return new URL("index.json", this.baseUrl.endsWith("/") ? this.baseUrl : this.baseUrl + "/").href;
+  }
+  private get(url: string): Promise<Response> {
+    return this.fetchImpl(url, { headers: { accept: "application/json, application/octet-stream", ...this.headers } }).then((r) => {
+      if (!r.ok) throw new Error(`store responded ${r.status} for ${new URL(url).pathname}`);
+      return r;
+    });
+  }
   async search(query = ""): Promise<RegistryEntry[]> {
-    const base = this.baseUrl.endsWith("/") ? this.baseUrl : this.baseUrl + "/";
-    const res = await this.fetchImpl(new URL("index.json", base));
-    if (!res.ok) throw new Error(`store responded ${res.status}`);
-    return entriesFromIndex((await res.json()) as StoreIndex, base, this.name, query);
+    const url = this.catalogUrl;
+    return entriesFromIndex((await (await this.get(url)).json()) as StoreIndex, url, this.name, query);
   }
   async fetch(entry: RegistryEntry, dest: string): Promise<PluginManifest> {
-    const res = await this.fetchImpl(entry.location);
-    if (!res.ok) throw new Error(`download failed: ${res.status}`);
+    if (entry.folder) {
+      await downloadFolder(entry, dest, (u) => this.get(u));
+      return (await readPluginManifest(dest)).manifest;
+    }
+    const res = await this.get(entry.location);
     const buf = Buffer.from(await res.arrayBuffer());
     if (entry.sha256 && crypto.createHash("sha256").update(buf).digest("hex") !== entry.sha256.replace(/^sha256-/, "")) {
       throw new Error("downloaded archive does not match the registry checksum");

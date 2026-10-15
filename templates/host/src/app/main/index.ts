@@ -4,7 +4,7 @@ import path from "node:path";
 import { PLUGIN_SCHEME, attachElectron, registerPluginProtocol } from "fluxplugin/main";
 import { APP_NAME } from "../shared/constants";
 import { createFramework } from "./framework";
-import { pluginDirs, projectRoot } from "./paths";
+import { pluginPaths, projectRoot } from "./paths";
 import { createMainWindow } from "./window";
 import { registerWindowApi } from "./window-api";
 
@@ -20,8 +20,10 @@ app.whenReady().then(async () => {
   // so the system shortcuts (copy/paste/quit/hide) keep working.
   Menu.setApplicationMenu(process.platform === "darwin" ? Menu.buildFromTemplate([{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]) : null);
 
+  const paths = pluginPaths(projectRoot(__dirname), app.getPath("userData"), app.isPackaged, process.resourcesPath);
   const fw = createFramework({
-    pluginDirs: pluginDirs(projectRoot(__dirname), app.getPath("userData")),
+    pluginDirs: [paths.bundled, paths.user],
+    installDir: paths.user,
     dataDir: path.join(app.getPath("userData"), "plugins-data"),
     dev,
   });

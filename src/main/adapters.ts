@@ -3,6 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { CHANNELS, type InvokeRequest } from "../core/index.js";
 import type { MainFramework } from "./framework.js";
+import { MIME, readAsset } from "./assets.js";
 
 /* ------------------------------------------------------------- Electron */
 
@@ -55,23 +56,6 @@ export const PLUGIN_SCHEME = {
   privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
 } as const;
 
-const MIME: Record<string, string> = {
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".avif": "image/avif",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-  ".map": "application/json",
-};
-
 /**
  * Resolves `fluxplugin://<id>/<path>` to a file inside the plugin's directory. Rejects traversal and anything that
  * is not an asset (the manifest and main entry are never served).
@@ -106,12 +90,13 @@ export async function resolvePluginAsset(fw: MainFramework, url: string): Promis
 /** Registers the `fluxplugin://` handler on an Electron `protocol` object (`protocol.handle`, Electron >= 25). */
 export function registerPluginProtocol(
   fw: MainFramework,
-  protocol: { handle(scheme: string, handler: (req: { url: string }) => Promise<Response> | Response): void },
+  protocol: { handle(scheme: string, handler: (req: { url: string; headers?: { get(name: string): string | null } }) => Promise<Response> | Response): void },
 ): void {
   protocol.handle(PLUGIN_SCHEME.scheme, async (req) => {
     const r = await resolvePluginAsset(fw, req.url);
     if (!r) return new Response("Not found", { status: 404 });
-    return new Response(await fs.readFile(r.file), { headers: { "content-type": r.mime, "access-control-allow-origin": "*" } });
+    const a = await readAsset(r.file, r.mime, req.headers?.get("range"));
+    return new Response(new Uint8Array(a.body), { status: a.status, headers: a.headers });
   });
 }
 
@@ -181,8 +166,9 @@ export function attachHttp(fw: MainFramework, opts: HttpAdapterOptions = {}): Pr
         const id = decodeURIComponent(rest.slice(0, slash));
         const r = await resolvePluginAsset(fw, `fluxplugin://${encodeURIComponent(id)}/${rest.slice(slash + 1)}`);
         if (!r) return json(res, 404, { error: "not found" });
-        res.writeHead(200, { "content-type": r.mime, "cache-control": "no-store" });
-        return res.end(await fs.readFile(r.file));
+        const a = await readAsset(r.file, r.mime, req.headers.range);
+        res.writeHead(a.status, a.headers);
+        return res.end(a.body);
       }
       if (opts.fallback && (await opts.fallback(req, res))) return;
       json(res, 404, { error: "not found" });

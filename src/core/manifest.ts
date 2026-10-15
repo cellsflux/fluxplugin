@@ -59,7 +59,7 @@ export const manifestSchema = s.object({
   /** Detailed description as Markdown (default: ./README.md). Rendered safely: no raw HTML. */
   readme: s.string().optional(),
   /** Explanation video (https URL; YouTube and Vimeo are embedded, other hosts become a link). */
-  video: s.string({ pattern: /^https:\/\/\S+$/ }).optional(),
+  video: s.string({ pattern: /^(https:\/\/\S+|\.\/\S+)$/ }).optional(),
   categories: s.array(s.string()).default([]),
   keywords: s.array(s.string()).default([]),
   /** Extra links: docs, support, changelog, funding... */
@@ -141,23 +141,48 @@ export function validateManifest(raw: unknown, opts: { frameworkVersion?: string
   return { ok: issues.length === 0, manifest: issues.length ? undefined : manifest, issues, warnings };
 }
 
-/** Turns a YouTube/Vimeo URL into a privacy-friendly embed URL; returns undefined for any other host. */
-export function videoEmbedUrl(url: string | undefined): string | undefined {
+export type VideoKind = "youtube" | "vimeo" | "dailymotion" | "loom" | "streamable" | "html5" | "link";
+export interface VideoInfo {
+  kind: VideoKind;
+  url: string;
+  /** iframe URL for hosted players. */
+  embedUrl?: string;
+  /** Direct media URL for the HTML5 <video> player (also a plugin-relative path before it is resolved). */
+  src?: string;
+}
+
+const MEDIA_EXT = /\.(mp4|m4v|webm|ogv|ogg|mov)(\?.*)?$/i;
+
+/**
+ * Classifies a video reference: hosted players that must be embedded in an iframe (YouTube, Vimeo, Dailymotion, Loom,
+ * Streamable), direct media files for the HTML5 player (https URL or a path inside the plugin), or a plain link.
+ */
+export function parseVideo(url: string | undefined): VideoInfo | undefined {
   if (!url) return undefined;
+  if (url.startsWith("./")) return MEDIA_EXT.test(url) ? { kind: "html5", url, src: url } : undefined;
   let u: URL;
   try {
     u = new URL(url);
   } catch {
     return undefined;
   }
+  if (u.protocol !== "https:") return undefined;
+  if (MEDIA_EXT.test(u.pathname)) return { kind: "html5", url, src: url };
   const host = u.hostname.replace(/^www\./, "");
+  const last = u.pathname.split("/").filter(Boolean).pop() ?? "";
   let id: string | undefined;
   if (host === "youtu.be") id = u.pathname.slice(1);
-  else if (host === "youtube.com" || host === "m.youtube.com") id = u.searchParams.get("v") ?? (/^\/(embed|shorts)\//.test(u.pathname) ? u.pathname.split("/")[2] : undefined);
-  if (id && /^[\w-]{6,20}$/.test(id)) return `https://www.youtube-nocookie.com/embed/${id}`;
-  if (host === "vimeo.com" || host === "player.vimeo.com") {
-    const vid = u.pathname.split("/").filter(Boolean).pop();
-    if (vid && /^\d+$/.test(vid)) return `https://player.vimeo.com/video/${vid}`;
-  }
-  return undefined;
+  else if (host === "youtube.com" || host === "m.youtube.com" || host === "youtube-nocookie.com") id = u.searchParams.get("v") ?? (/^\/(embed|shorts|live)\//.test(u.pathname) ? u.pathname.split("/")[2] : undefined);
+  if (id && /^[\w-]{6,20}$/.test(id)) return { kind: "youtube", url, embedUrl: `https://www.youtube-nocookie.com/embed/${id}` };
+  if ((host === "vimeo.com" || host === "player.vimeo.com") && /^\d+$/.test(last)) return { kind: "vimeo", url, embedUrl: `https://player.vimeo.com/video/${last}` };
+  if (host === "dailymotion.com" && /^\/(embed\/)?video\//.test(u.pathname) && /^\w+$/.test(last)) return { kind: "dailymotion", url, embedUrl: `https://www.dailymotion.com/embed/video/${last}` };
+  if (host === "dai.ly" && /^\w+$/.test(last)) return { kind: "dailymotion", url, embedUrl: `https://www.dailymotion.com/embed/video/${last}` };
+  if (host === "loom.com" && /^\/(share|embed)\//.test(u.pathname) && /^[\w-]+$/.test(last)) return { kind: "loom", url, embedUrl: `https://www.loom.com/embed/${last}` };
+  if (host === "streamable.com" && /^\w+$/.test(last)) return { kind: "streamable", url, embedUrl: `https://streamable.com/e/${last}` };
+  return { kind: "link", url };
+}
+
+/** Back-compat helper: the iframe URL of a hosted player, if any. */
+export function videoEmbedUrl(url: string | undefined): string | undefined {
+  return parseVideo(url)?.embedUrl;
 }

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { extractTarGz } from "./tar.js";
-import { entriesFromIndex, readPluginManifest, type PluginRegistry, type RegistryEntry, type StoreIndex } from "./registry.js";
+import { downloadFolder, entriesFromIndex, readPluginManifest, type PluginRegistry, type RegistryEntry, type StoreIndex } from "./registry.js";
 import type { PluginManifest } from "../core/index.js";
 
 export const DEFAULT_TOPIC = "fluxplugin-plugin";
@@ -45,7 +45,8 @@ function assertSafeUrl(u: string): URL {
  * GitHub as a plugin store. Two modes (they can be combined by adding two registries):
  *  - `topic` (default): developers publish a GitHub *release* in their own repo with `fluxplugin publish`; it is discovered
  *    through the repository topic. No central approval.
- *  - `repo`: a curated catalog repository with an `index.json`.
+ *  - `repo`: a catalog repository: plugin folders + one JSON file (`index.json` by default, see `fluxplugin store build`) with all the
+ *    metadata. Plugins are installed straight from their folders in the repo (every file verified against the catalog hashes).
  */
 export class GitHubRegistry implements PluginRegistry {
   readonly name: string;
@@ -119,6 +120,10 @@ export class GitHubRegistry implements PluginRegistry {
   }
 
   async fetch(entry: RegistryEntry, dest: string): Promise<PluginManifest> {
+    if (entry.folder) {
+      await downloadFolder(entry, dest, (u) => this.get(u, "application/octet-stream"));
+      return (await readPluginManifest(dest)).manifest;
+    }
     const res = await this.get(entry.location, "application/octet-stream");
     const len = Number(res.headers.get("content-length") ?? 0);
     if (len > MAX_PACKAGE_BYTES) throw new Error("package is too large");

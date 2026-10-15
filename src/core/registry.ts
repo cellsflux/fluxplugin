@@ -167,7 +167,11 @@ export interface MenuItemDefinition {
   badge?: string | number;
   /** Route path, for sidebar entries that navigate without a command. */
   path?: string;
+  /** Id of another item (same location) this one is nested under: builds sub-menus without the parent knowing its children. */
+  parent?: string;
 }
+
+export type MenuNode = Omit<MenuItemDefinition, "location" | "children"> & { location?: MenuItemDefinition["location"]; children?: MenuNode[] };
 
 export class MenuRegistry extends Registry<MenuItemDefinition> {
   constructor() {
@@ -176,6 +180,33 @@ export class MenuRegistry extends Registry<MenuItemDefinition> {
 
   register(item: MenuItemDefinition, owner?: string): Disposable {
     return this.add(`${item.location}:${item.id}`, item, owner);
+  }
+
+  /**
+   * Hierarchical view of a location: items that name a `parent`, plus the parent's own `children`, are nested under it
+   * (sorted by order). Unknown parents fall back to top level, so a missing plugin never hides its siblings.
+   */
+  tree(location: MenuLocation): MenuNode[] {
+    const flat = this.items(location);
+    const byId = new Map(flat.map((i) => [i.id, i]));
+    const toNode = (i: MenuItemDefinition): MenuNode => ({ ...i, children: [...(i.children ?? [])] as MenuNode[] });
+    const nodes = new Map(flat.map((i) => [i.id, toNode(i)]));
+    const roots: MenuNode[] = [];
+    for (const i of flat) {
+      const n = nodes.get(i.id)!;
+      const parent = i.parent && i.parent !== i.id ? nodes.get(i.parent) : undefined;
+      if (parent && byId.has(i.parent!)) parent.children!.push(n);
+      else roots.push(n);
+    }
+    const sort = (list: MenuNode[]): void => {
+      list.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.label.localeCompare(b.label));
+      for (const n of list) {
+        if (n.children?.length) sort(n.children);
+        else delete n.children;
+      }
+    };
+    sort(roots);
+    return roots;
   }
 
   items(location: MenuLocation): MenuItemDefinition[] {

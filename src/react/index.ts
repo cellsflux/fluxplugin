@@ -9,3 +9,8 @@ export * from "./icons.js";
 export * from "./markdown.js";
 export * from "./theme.js";
 export * from "./titlebar.js";
+export * from "./ui.js";
+export * from "./media.js";
+export * from "./i18n.js";
+export * from "./sidebar.js";
+export * from "./settings.js";

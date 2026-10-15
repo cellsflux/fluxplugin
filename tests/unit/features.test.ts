@@ -99,11 +99,19 @@ describe("Markdown (plugin descriptions)", () => {
     expect(out).toContain("<pre><code>code</code></pre>");
     expect(out).toContain('href="https://example.com"');
   });
-  it("never renders raw HTML, scripts, javascript: links or images", () => {
-    const out = html('<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n![img](https://x.dev/a.png) <img src=x onerror=alert(1)>');
+  it("never interprets raw HTML or scripts, never links javascript:, only shows images from safe sources", () => {
+    const out = html('<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n![ok](https://x.dev/a.png) ![bad](javascript:alert(1)) <img src=x onerror=alert(1)>');
     expect(out).not.toContain("<script");
-    expect(out).not.toContain("<img");
-    expect(out).not.toContain("javascript:");
+    expect(out).not.toContain("<img src=\"x\"");
+    expect(out).not.toContain('src="javascript:');
+    expect(out).not.toContain('href="javascript:');
     expect(out).toContain("&lt;script&gt;");
+    expect(out).toContain('src="https://x.dev/a.png"');
+  });
+  it("renders callouts, task lists and resolves relative images against a base URL", () => {
+    const out = renderToStaticMarkup(React.createElement(Markdown, { source: "> [!WARNING] Careful\n\n- [x] done\n- [ ] todo\n\n![shot](assets/s.png)", baseUrl: "https://cdn.test/p/" }));
+    expect(out).toContain('class="flux-callout" data-kind="warning"');
+    expect(out).toMatch(/<input type="checkbox"[^>]*checked=""/);
+    expect(out).toContain('src="https://cdn.test/p/assets/s.png"');
   });
 });

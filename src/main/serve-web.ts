@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import type { MainFramework } from "./framework.js";
 import { attachHttp } from "./adapters.js";
 
-const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".map": "application/json", ".svg": "image/svg+xml", ".png": "image/png" };
+const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".map": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".jpg": "image/jpeg", ".webp": "image/webp" };
 
 /**
  * Runs the app in a plain browser: serves the built renderer (`distDir`) plus the framework wire protocol over HTTP/SSE.

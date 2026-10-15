@@ -12,7 +12,7 @@ import {
   serializeError,
   type Bootstrap,
   type PluginDetails,
-  videoEmbedUrl,
+  parseVideo,
   type InvokeRequest,
   type InvokeResponse,
   type Permission,
@@ -279,8 +279,12 @@ export class MainFramework {
     h(MGMT.logs, ({ id }) => this.logs.query(id ? { source: id } : {}).slice(-200));
     h(MGMT.diagnostics, ({ id }) => this.manager.diagnostics(id));
     h(MGMT.details, ({ id }) => this.details(id));
-    h(MGMT.search, ({ query }) => this.installer.search(query));
-    h(MGMT.updates, () => this.installer.updates());
+    h(MGMT.search, async ({ query }) => {
+      const installed = new Map(this.manager.list().map((p) => [p.id, p.version]));
+      // The store is asked first; each entry is then compared with what is installed locally.
+      return (await this.installer.search(query)).map((e) => ({ ...e, installedVersion: installed.get(e.id) }));
+    });
+    h(MGMT.updates, async () => (await this.installer.updates()).map((e) => ({ ...e, installedVersion: this.manager.has(e.id) ? this.manager.info(e.id).version : undefined })));
     h(MGMT.install, async ({ entry }) => this.installAndLoad(entry));
     h(MGMT.update, async ({ entry }) => this.installAndLoad(entry));
     h(MGMT.uninstall, async ({ id }) => {
@@ -322,8 +326,13 @@ export class MainFramework {
       iconUrl: m.icon ? url(id, m.icon) : undefined,
       bannerUrl: m.banner ? url(id, m.banner) : undefined,
       screenshotUrls: (m.screenshots ?? []).map((s) => url(id, s)),
-      video: m.video ? { url: m.video, embedUrl: videoEmbedUrl(m.video) } : undefined,
+      video: (() => {
+        const v = parseVideo(m.video);
+        // a video shipped inside the plugin is served through the plugin asset URL
+        return v?.kind === "html5" && v.src?.startsWith("./") ? { ...v, src: url(id, v.src) } : v;
+      })(),
       readme,
+      assetBase: url(id, "./"),
     };
   }
 

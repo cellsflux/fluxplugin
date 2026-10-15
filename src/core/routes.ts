@@ -20,7 +20,7 @@ export interface RouteMeta {
   /** Static label or function computing it from params (e.g. loaded entity name). */
   breadcrumb?: string | ((params: RouteParams) => string);
   /** Adds an automatic menu entry for this route. */
-  menu?: false | { location?: MenuLocation; label?: string; order?: number; group?: string };
+  menu?: false | { location?: MenuLocation; label?: string; order?: number; group?: string; /** nest under this menu item id */ parent?: string; icon?: unknown };
   [key: string]: unknown;
 }
 

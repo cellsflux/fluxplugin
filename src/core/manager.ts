@@ -636,10 +636,11 @@ export class PluginManager {
           id: `route:${route.fullPath}`,
           location: menu.location ?? "sidebar",
           label: menu.label ?? meta.title ?? route.fullPath,
-          icon: meta.icon,
+          icon: menu.icon ?? meta.icon,
           path: route.fullPath,
           order: menu.order,
           group: menu.group,
+          parent: menu.parent,
         },
         owner,
       );

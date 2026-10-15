@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePluginFramework } from "./components.js";
+import { useT } from "./i18n.js";
 
 /** Global keybindings: runs the command bound to the pressed shortcut. `Mod` = Ctrl (Win/Linux) or Cmd (macOS). */
 export function useKeybindings(opts: { enabled?: boolean } = {}): void {
@@ -31,6 +32,7 @@ export function useKeybindings(opts: { enabled?: boolean } = {}): void {
 /** Searchable command palette (opens with Mod+K, or controlled through `open`). */
 export function CommandPalette({ open, onClose }: { open?: boolean; onClose?: () => void }): React.ReactElement | null {
   const fw = usePluginFramework();
+  const t = useT();
   const cmds = fw.manager.commands;
   useSyncExternalStore(cmds.subscribe, () => cmds.version, () => cmds.version);
   const [internal, setInternal] = useState(false);
@@ -73,7 +75,7 @@ export function CommandPalette({ open, onClose }: { open?: boolean; onClose?: ()
         <input
           ref={input}
           className="flux-palette-input"
-          placeholder="Type a command…"
+          placeholder={t("palette.placeholder", "Type a command…")}
           value={query}
           onChange={(e) => (setQuery(e.target.value), setIndex(0))}
           onKeyDown={(e) => {
@@ -83,7 +85,7 @@ export function CommandPalette({ open, onClose }: { open?: boolean; onClose?: ()
           }}
         />
         <ul className="flux-palette-list" role="listbox">
-          {results.length === 0 && <li className="flux-palette-empty">No matching commands</li>}
+          {results.length === 0 && <li className="flux-palette-empty">{t("palette.empty", "No matching commands")}</li>}
           {results.map((c, i) => (
             <li key={c.id} role="option" aria-selected={i === index} className={"flux-palette-item" + (i === index ? " is-active" : "")} onMouseEnter={() => setIndex(i)} onClick={() => run(i)}>
               <span>

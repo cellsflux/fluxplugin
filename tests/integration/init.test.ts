@@ -12,7 +12,7 @@ describe("fluxplugin init / plugin new", () => {
       process.chdir(tmp);
       expect(await run(["init", "my-app"])).toBe(0);
       const app = path.join(tmp, "my-app");
-      for (const f of ["package.json", "fluxplugin.config.json", "src/app/shared/constants.ts", "src/app/main/index.ts", "src/app/main/web.ts", "src/app/main/framework.ts", "src/app/preload/index.ts", "src/app/renderer/index.tsx", "src/app/renderer/bootstrap.ts", "src/app/renderer/shell/AppShell.tsx", "src/app/renderer/pages/DashboardPage.tsx", "src/app/renderer/index.html", "src/app/main/window.ts", "src/app/main/window-api.ts", "src/app/renderer/menus.ts", "plugins/hello/plugin.json", "plugins/hello/assets/icon.svg", "plugins/hello/README.md"])
+      for (const f of ["package.json", "fluxplugin.config.json", "src/app/shared/constants.ts", "src/app/main/index.ts", "src/app/main/web.ts", "src/app/main/framework.ts", "src/app/preload/index.ts", "src/app/renderer/index.tsx", "src/app/renderer/bootstrap.ts", "src/app/renderer/shell/AppShell.tsx", "src/app/renderer/pages/DashboardPage.tsx", "src/app/renderer/index.html", "src/app/main/window.ts", "src/app/main/window-api.ts", "src/app/renderer/menus.ts", "plugins/hello/plugin.json", "plugins/hello/assets/icon.svg", "plugins/hello/README.md", "plugins/appearance/plugin.json", "plugins/language/src/messages.ts", "electron-builder.yml", "src/app/renderer/settings/index.tsx"])
         await fs.access(path.join(app, f));
       const pkg = JSON.parse(await fs.readFile(path.join(app, "package.json"), "utf8"));
       expect(pkg.dependencies.fluxplugin).toMatch(/^\^?\d|^file:/);
@@ -29,7 +29,10 @@ describe("fluxplugin init / plugin new", () => {
       expect(JSON.parse(await fs.readFile(path.join(tw, "package.json"), "utf8")).devDependencies["@tailwindcss/cli"]).toMatch(/^\^4/);
       expect(await fs.readFile(path.join(tw, "src/app/renderer/styles/tailwind.css"), "utf8")).toContain('@import "tailwindcss"');
       expect(await fs.readFile(path.join(tw, "src/app/renderer/index.html"), "utf8")).toContain("tailwind.css");
-      expect(await fs.readFile(path.join(tw, "src/app/renderer/shell/Sidebar.tsx"), "utf8")).toContain("bg-surface");
+      const shell = await fs.readFile(path.join(tw, "src/app/renderer/shell/AppShell.tsx"), "utf8");
+      expect(shell).toContain("grid-rows-[40px_minmax(0,1fr)]"); // the shell requested by the user (fixed sidebar, scrolling content)
+      expect(shell).toContain("var(--flux-sidebar-w");
+      expect(await fs.readFile(path.join(tw, "src/app/renderer/shell/Sidebar.tsx"), "utf8")).toContain("SidebarNav");
       process.chdir(app);
       expect(await run(["plugin", "new", "orders", "-t", "backend"])).toBe(0);
       await fs.access(path.join(app, "plugins/orders/plugin.json"));

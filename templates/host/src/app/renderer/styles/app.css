@@ -1,10 +1,11 @@
-body { margin: 0; font: 14px system-ui; background: var(--flux-bg); color: var(--flux-fg); }
-.app { display: grid; grid-template-rows: var(--flux-titlebar-h, 40px) 1fr; min-height: 100vh; }
-.body { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
-.side { border-right: 1px solid var(--flux-border); padding: 16px; background: var(--flux-surface); }
-.side a { display: block; padding: 7px 10px; border-radius: 8px; color: inherit; text-decoration: none; margin: 2px 0; }
-.side a[data-active] { background: var(--flux-accent); color: #fff; }
-.main { padding: 24px; max-width: 860px; overflow: auto; }
+body { margin: 0; }
+.app { display: grid; height: 100vh; grid-template-rows: 40px minmax(0, 1fr); overflow: hidden; }
+.app-titlebar { z-index: 50; min-width: 0; }
+.body { display: grid; min-height: 0; min-width: 0; grid-template-columns: var(--flux-sidebar-w, 232px) minmax(0, 1fr); overflow: hidden; transition: grid-template-columns .18s ease; }
+.app-side { height: 100%; min-height: 0; overflow: hidden; }
+.main { min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 24px 28px; }
+.main-inner { max-width: 900px; margin: 0 auto; }
 .row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
-.btn { border: 1px solid var(--flux-border); background: var(--flux-bg); color: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
-.hint { color: var(--flux-muted); font-size: 12px; }
+.btn { border: 1px solid var(--flux-border); background: var(--flux-bg); color: inherit; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-weight: 500; }
+.btn:hover { background: var(--flux-surface); }
+.hint { color: var(--flux-muted); font-size: .86em; }

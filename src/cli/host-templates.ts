@@ -7,6 +7,8 @@ export interface HostVars {
   /** Electron semver range (init resolves the latest published version). */
   electron?: string;
   tailwind?: boolean;
+  /** Stores for fluxplugin.config.json (default: the GitHub topic store). */
+  stores?: import("../main/index.js").StoreSpec[];
 }
 
 /** Files of a new host application (`fluxplugin init`). Plain strings so the CLI stays a single self-contained file. */
@@ -19,16 +21,21 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
         private: true,
         type: "module",
         main: "dist/main.cjs",
+        description: `${v.name} — built with fluxplugin`,
+        author: "Your name",
         scripts: {
           dev: "fluxplugin dev",
           "dev:web": "fluxplugin dev --web",
           build: "fluxplugin build",
           start: "fluxplugin start",
+          dist: "fluxplugin dist",
+          "export:web": "fluxplugin export",
+          "plugins:package": "fluxplugin package --all",
           "plugin:new": "fluxplugin plugin new",
           typecheck: "tsc --noEmit",
         },
         dependencies: { fluxplugin: v.fluxSpec, react: "^19.0.0", "react-dom": "^19.0.0" },
-        devDependencies: { electron: v.electron ?? "^44.5.1", typescript: "~5.9.3", "@types/node": "^22.10.0", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", ...(v.tailwind ? { tailwindcss: "^4.0.0", "@tailwindcss/cli": "^4.0.0" } : {}) },
+        devDependencies: { electron: v.electron ?? "^44.5.1", "electron-builder": "^26.0.0", typescript: "~5.9.3", "@types/node": "^22.10.0", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", ...(v.tailwind ? { tailwindcss: "^4.0.0", "@tailwindcss/cli": "^4.0.0" } : {}) },
         // npm 11.16+/12 and pnpm 10 block dependency install scripts unless allowed; Electron needs its postinstall to download the binary.
         allowScripts: { electron: true, esbuild: true },
         pnpm: { onlyBuiltDependencies: ["electron", "esbuild"] },
@@ -37,7 +44,7 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
       2,
     ),
     // "stores" is used by the CLI (fluxplugin search/install) AND by your app (Plugins → Available). Add your own store here.
-    "fluxplugin.config.json": JSON.stringify({ pluginsDir: "plugins", outDir: "dist", stores: [{ type: "github", topic: "fluxplugin-plugin" }] }, null, 2),
+    "fluxplugin.config.json": JSON.stringify({ pluginsDir: "plugins", outDir: "dist", stores: v.stores ?? [{ type: "github", topic: "fluxplugin-plugin" }] }, null, 2),
     "tsconfig.json": JSON.stringify(
       { compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "Bundler", jsx: "react-jsx", strict: true, noEmit: true, skipLibCheck: true, resolveJsonModule: true, lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["node"] }, include: ["src"] },
       null,
@@ -47,7 +54,7 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
     "README.md": readme(v.name),
   };
   // The application itself: layered under src/app (shared → main / preload / renderer).
-  for (const [rel, content] of Object.entries(HOST_APP_FILES)) files[rel] = content.split("__APP_NAME__").join(v.name);
+  for (const [rel, content] of Object.entries(HOST_APP_FILES)) files[rel] = content.split("__APP_NAME__").join(v.name).split("__APP_ID__").join(v.name.replace(/[^a-z0-9]/gi, ""));
   if (v.tailwind) for (const [rel, content] of Object.entries(HOST_TAILWIND_FILES)) files[rel] = content.split("__APP_NAME__").join(v.name);
   if (withSample) {
     const sample = TEMPLATES.dashboard(varsFromName("hello"));

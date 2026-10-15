@@ -4,14 +4,15 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { validateManifest } from "../core/index.js";
 import { JsonStateFile, LocalRegistry, PluginInstaller, computeIntegrity, copyDir, createRegistries, extractTarGz, generateSigningKeyPair, verifyPlugin } from "../main/index.js";
-import { buildPlugin } from "./build.js";
+import { buildPlugin, linkPluginToHost } from "./build.js";
 import { buildHost, ensureElectron, isHostProject, startApp } from "./host.js";
 import { hostFiles } from "./host-templates.js";
 import { packagePlugin } from "./package.js";
 import { publishPlugin } from "./publish.js";
-import { storeAdd, storeInit } from "./store.js";
+import { storeAdd, storeBuild, storeInit } from "./store.js";
+import { distApp, exportWebsite } from "./dist.js";
 import { loadConfig } from "./config.js";
-import { TEMPLATES, varsFromName, withTailwind, type TemplateName } from "./templates.js";
+import { TEMPLATES, standaloneExtras, varsFromName, withTailwind, type TemplateName } from "./templates.js";
 
 const HELP = `fluxplugin <command>
 
@@ -20,13 +21,18 @@ const HELP = `fluxplugin <command>
   dev [--web]                     run your app with plugin hot reload (Electron, or a browser with --web)
   build                           bundle your app (in an app folder) or a plugin (in a plugin folder)
   start [--web]                   run the built app
-  plugin new <name> [-t basic|dashboard|backend] [--tailwindcss]   scaffold a plugin (alias: create)
+  dist [--win|--mac|--linux] [--unpacked]   build the app into an installer/executable (electron-builder)
+  export [--out website]          extract the app as a static website
+  plugin new <name> [-t basic|dashboard|backend] [--tailwindcss] [--standalone]   scaffold a plugin (its own project when outside an app)
+  dev --host <app>                (in a plugin project) rebuild on save and sync into a host app that hot-reloads it
   validate [dir]                  check a plugin manifest, entries and integrity
   publish [dir] [--repo o/r] [--dry-run]   publish a plugin to the store (GitHub release + topic)
   search [query]                  search the configured stores
   install <id[@version]|dir|.tgz> install a plugin from a store, a folder or a package
   store init <dir>                create your own store (index.json) — host it anywhere
   store add <pkg.tgz> [--dir d] [--base-url url]   add a package to your store
+  store build [dir] [--out index.json]            build the catalog JSON from plugin folders (repo layout)
+  package --all [--out release/plugins]           package every plugin of the app
   package [dir] [--out d] [--sign-key file]   build + integrity (+ signature) + .tgz
   install <dir|.tgz> [--dir plugins]   uninstall <id>   enable <id>   disable <id>   list
   keygen [--out name]    create an ed25519 signing key pair
@@ -40,7 +46,7 @@ export async function readManifest(root: string) {
 export async function run(argv: string[]): Promise<number> {
   const { values: f, positionals: pos } = parseArgs({
     args: argv, allowPositionals: true,
-    options: { template: { type: "string", short: "t" }, out: { type: "string" }, dir: { type: "string" }, data: { type: "string" }, "sign-key": { type: "string" }, help: { type: "boolean", short: "h" }, web: { type: "boolean" }, port: { type: "string" }, name: { type: "string" }, "no-sample": { type: "boolean" }, tailwindcss: { type: "boolean" }, repo: { type: "string" }, token: { type: "string" }, "dry-run": { type: "boolean" }, "base-url": { type: "string" } },
+    options: { template: { type: "string", short: "t" }, out: { type: "string" }, dir: { type: "string" }, data: { type: "string" }, "sign-key": { type: "string" }, help: { type: "boolean", short: "h" }, web: { type: "boolean" }, port: { type: "string" }, name: { type: "string" }, "no-sample": { type: "boolean" }, tailwindcss: { type: "boolean" }, repo: { type: "string" }, token: { type: "string" }, "dry-run": { type: "boolean" }, "base-url": { type: "string" }, all: { type: "boolean" }, win: { type: "boolean" }, mac: { type: "boolean" }, linux: { type: "boolean" }, unpacked: { type: "boolean" }, store: { type: "string" }, host: { type: "string" }, standalone: { type: "boolean" } },
   });
   let [cmd, arg] = pos;
   if (cmd === "store") { cmd = "store:" + (pos[1] ?? ""); arg = pos[2]; }
@@ -54,7 +60,7 @@ export async function run(argv: string[]): Promise<number> {
         const entries = await fs.readdir(target).catch(() => []);
         if (entries.length) throw new Error(`${target} is not empty`);
         const name = (f.name ?? path.basename(target)).toLowerCase().replace(/[^a-z0-9-_.]+/g, "-");
-        const files = hostFiles({ name, fluxSpec: process.env["FLUXPLUGIN_SPEC"] ?? `^${await ownVersion()}`, electron: await latestElectron(), tailwind: !!f.tailwindcss }, !f["no-sample"]);
+        const files = hostFiles({ name, fluxSpec: process.env["FLUXPLUGIN_SPEC"] ?? `^${await ownVersion()}`, electron: await latestElectron(), tailwind: !!f.tailwindcss, stores: parseStoreSpec(f.store) }, !f["no-sample"]);
         for (const [rel, content] of Object.entries(files)) {
           await fs.mkdir(path.dirname(path.join(target, rel)), { recursive: true });
           await fs.writeFile(path.join(target, rel), content);
@@ -68,16 +74,19 @@ export async function run(argv: string[]): Promise<number> {
         const tpl = (f.template ?? "basic") as TemplateName;
         if (!(tpl in TEMPLATES)) throw new Error(`unknown template "${tpl}"`);
         // Inside an app folder, new plugins go to ./plugins by default.
-        const base = (await isHostProject(process.cwd())) && !path.isAbsolute(arg) && !arg.includes("/") ? path.join((await loadConfig({}, process.cwd())).pluginsDir, arg) : path.resolve(arg);
+        const inHost = await isHostProject(process.cwd());
+        const standalone = !!f.standalone || !inHost;
+        const base = inHost && !f.standalone && !path.isAbsolute(arg) && !arg.includes("/") && !arg.includes("\\") ? path.join((await loadConfig({}, process.cwd())).pluginsDir, arg) : path.resolve(arg);
         if (await fs.stat(base).catch(() => null)) throw new Error(`${base} already exists`);
         const vars = varsFromName(path.basename(base));
         let files = TEMPLATES[tpl](vars);
         if (f.tailwindcss) files = withTailwind(files, vars);
+        if (standalone) files = { ...files, ...standaloneExtras(vars) };
         for (const [rel, content] of Object.entries(files)) {
           await fs.mkdir(path.dirname(path.join(base, rel)), { recursive: true });
           await fs.writeFile(path.join(base, rel), content);
         }
-        log(`✔ created ${tpl} plugin in ${base}\n  next: fluxplugin build ${path.relative(process.cwd(), base)}`);
+        log(`✔ created ${tpl} plugin in ${base}${standalone ? "\n\n  cd " + path.relative(process.cwd(), base) + "\n  npm install\n  npm run dev:host    # run it inside your app while you work (edit the path in package.json)" : "\n  next: fluxplugin build " + path.relative(process.cwd(), base)}`);
         return 0;
       }
       case "build": {
@@ -87,7 +96,11 @@ export async function run(argv: string[]): Promise<number> {
       }
       case "dev": {
         const cwd = process.cwd();
-        if (arg || !(await isHostProject(cwd))) { await buildPlugin(root, true); await new Promise(() => {}); }
+        if (arg || !(await isHostProject(cwd))) {
+          await buildPlugin(root, true);
+          if (f.host) await linkPluginToHost(root, path.resolve(f.host));
+          await new Promise(() => {}); // run until Ctrl+C
+        }
         const dispose = await buildHost(cwd, { watch: true });
         const { child, mode } = startApp(cwd, { web: f.web, dev: true, port: f.port ? Number(f.port) : undefined });
         child.on("error", (e) => console.error(`error: ${e.message}`));
@@ -104,7 +117,28 @@ export async function run(argv: string[]): Promise<number> {
       }
       case "doctor": return await doctor(process.cwd());
       case "validate": return await validate(root);
-      case "package": return (await packagePlugin(root, { out: f.out, signKey: f["sign-key"] }), 0);
+      case "package": {
+        if (f.all) {
+          const cfg = await loadConfig(f);
+          let n = 0;
+          for (const d of (await fs.readdir(cfg.pluginsDir).catch(() => [])).sort()) {
+            if (!(await fs.stat(path.join(cfg.pluginsDir, d, "plugin.json")).catch(() => null))) continue;
+            await packagePlugin(path.join(cfg.pluginsDir, d), { out: f.out ?? "release/plugins", signKey: f["sign-key"] });
+            n++;
+          }
+          log(`✔ packaged ${n} plugin(s) in ${f.out ?? "release/plugins"}`);
+          return 0;
+        }
+        await packagePlugin(root, { out: f.out, signKey: f["sign-key"] });
+        return 0;
+      }
+      case "dist": return await distApp(process.cwd(), { win: f.win, mac: f.mac, linux: f.linux, dir: f.unpacked });
+      case "export": await exportWebsite(process.cwd(), f.out ?? "website"); return 0;
+      case "store:build": {
+        const r = await storeBuild(path.resolve(arg ?? "."), { out: f.out });
+        log(`✔ catalog with ${r.count} plugin(s) written to ${r.file}\n  commit it with the plugin folders; point a store at the repo: { "type": "github", "repo": "owner/name" }`);
+        return 0;
+      }
       case "publish":
         await publishPlugin(root, { repo: f.repo, token: f.token, signKey: f["sign-key"], dryRun: f["dry-run"] });
         return 0;
@@ -241,4 +275,13 @@ async function doctor(cwd: string): Promise<number> {
   if (!pkg.allowScripts?.["electron"]) log('! package.json has no "allowScripts": {"electron": true}. npm 12 blocks Electron\'s postinstall without it (fluxplugin downloads the binary for you, but add it for clean installs).');
   log(bad ? "\nSome checks failed." : "\nAll good.");
   return bad ? 1 : 0;
+}
+
+/** "github:owner/repo" | "https://host/plugins.json" (JSON link) | "https://host/store/" (folder with index.json) */
+export function parseStoreSpec(spec: string | undefined): import("../main/index.js").StoreSpec[] | undefined {
+  if (!spec) return undefined;
+  const gh = /^github:([\w.-]+\/[\w.-]+)$/.exec(spec);
+  if (gh) return [{ type: "github", repo: gh[1]! }];
+  if (/^https:\/\/\S+$/.test(spec)) return [spec.toLowerCase().split("?")[0]!.endsWith(".json") ? { type: "json", url: spec } : { type: "http", url: spec }];
+  throw new Error('--store must be "github:owner/repo" or an https URL (a .json link, or a folder URL ending with /)');
 }

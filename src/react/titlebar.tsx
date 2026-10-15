@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore, type
 import type { MenuItemDefinition, NotificationItem } from "../core/index.js";
 import { Icon } from "./icons.js";
 import { PluginSlot, useExtensionItems, usePluginFramework } from "./components.js";
+import { useT } from "./i18n.js";
 import { formatShortcut, useOS } from "./os.js";
 import { navigate } from "./router.js";
 import { ThemeSwitcher, type SearchProvider, type SearchResult } from "./theme.js";
@@ -68,8 +69,9 @@ export function AppMenuBar(): React.ReactElement | null {
 /* -------------------------------------------------------------------- search */
 
 /** Search box: commands, pages, and results from `titlebar.searchProviders` contributed by plugins. */
-export function SearchBox({ placeholder = "Search…" }: { placeholder?: string }): React.ReactElement {
+export function SearchBox({ placeholder }: { placeholder?: string }): React.ReactElement {
   const fw = usePluginFramework();
+  const t = useT();
   const providers = useExtensionItems<SearchProvider>("titlebar", "searchProviders");
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -88,23 +90,23 @@ export function SearchBox({ placeholder = "Search…" }: { placeholder?: string 
     (async () => {
       const lower = query.toLowerCase();
       const own: SearchResult[] = [
-        ...fw.manager.commands.palette(query).slice(0, 5).map((c) => ({ id: "cmd:" + c.id, title: c.title, subtitle: c.category, group: "Commands", run: () => void fw.manager.commands.execute(c.id) })),
-        ...fw.manager.menus.items("sidebar").filter((m) => m.path && m.label.toLowerCase().includes(lower)).map((m) => ({ id: "page:" + m.id, title: m.label, group: "Pages", run: () => navigate(m.path!) })),
+        ...fw.manager.commands.palette(query).slice(0, 5).map((c) => ({ id: "cmd:" + c.id, title: c.title, subtitle: c.category, group: t("search.commands", "Commands"), run: () => void fw.manager.commands.execute(c.id) })),
+        ...fw.manager.menus.items("sidebar").filter((m) => m.path && m.label.toLowerCase().includes(lower)).map((m) => ({ id: "page:" + m.id, title: m.label, group: t("search.pages", "Pages"), run: () => navigate(m.path!) })),
       ];
       const extra = await Promise.all(providers.map(async (p) => { try { return ((await p.search(query)) ?? []).map((r) => ({ ...r, group: r.group ?? p.label })); } catch { return []; } }));
       if (live) (setResults([...own, ...extra.flat()].slice(0, 12)), setIdx(0));
     })();
     return () => { live = false; };
-  }, [q, fw, providers]);
+  }, [q, fw, providers, t]);
   const go = (r?: SearchResult) => { if (!r) return; setQ(""); input.current?.blur(); void r.run(); };
   return (
     <div className="flux-search" data-testid="searchbox">
       <Icon name="search" />
-      <input ref={input} value={q} placeholder={placeholder} aria-label="Search" onChange={(e) => setQ(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 120)}
+      <input ref={input} value={q} placeholder={placeholder ?? t("search.placeholder", "Search…")} aria-label={t("search.label", "Search")} onChange={(e) => setQ(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setTimeout(() => setFocus(false), 120)}
         onKeyDown={(e) => { if (e.key === "ArrowDown") (e.preventDefault(), setIdx((i) => Math.min(i + 1, results.length - 1))); else if (e.key === "ArrowUp") (e.preventDefault(), setIdx((i) => Math.max(i - 1, 0))); else if (e.key === "Enter") go(results[idx]); else if (e.key === "Escape") (setQ(""), input.current?.blur()); }} />
       {focus && q.trim() && (
         <ul className="flux-dropdown flux-search-results" role="listbox">
-          {results.length === 0 && <li className="flux-empty">No results</li>}
+          {results.length === 0 && <li className="flux-empty">{t("search.noResults", "No results")}</li>}
           {results.map((r, i) => (
             <li key={r.id} role="option" aria-selected={i === idx}>
               {(i === 0 || results[i - 1]!.group !== r.group) && <div className="flux-group">{r.group}</div>}
@@ -130,6 +132,7 @@ function useNotifications() {
 
 export function NotificationBell(): React.ReactElement {
   const fw = usePluginFramework();
+  const t = useT();
   const center = useNotifications();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -141,14 +144,14 @@ export function NotificationBell(): React.ReactElement {
   const unread = center.unread;
   return (
     <div className="flux-bell" ref={ref}>
-      <button type="button" className="flux-tb-btn" aria-label="Notifications" data-testid="bell" onClick={() => (setOpen(!open), !open && center.markRead())}>
+      <button type="button" className="flux-tb-btn" aria-label={t("notifications.title", "Notifications")} data-testid="bell" onClick={() => (setOpen(!open), !open && center.markRead())}>
         <Icon name="bell" />
         {unread > 0 && <span className="flux-badge" data-testid="bell-count">{unread}</span>}
       </button>
       {open && (
-        <div className="flux-dropdown flux-notif-panel" role="dialog" aria-label="Notifications">
-          <div className="flux-notif-head"><strong>Notifications</strong><button type="button" className="flux-link" onClick={() => center.clear()}>Clear all</button></div>
-          {center.list().length === 0 && <div className="flux-empty">You're all caught up</div>}
+        <div className="flux-dropdown flux-notif-panel" role="dialog" aria-label={t("notifications.title", "Notifications")}>
+          <div className="flux-notif-head"><strong>{t("notifications.title", "Notifications")}</strong><button type="button" className="flux-link" onClick={() => center.clear()}>{t("notifications.clear", "Clear all")}</button></div>
+          {center.list().length === 0 && <div className="flux-empty">{t("notifications.empty", "You're all caught up")}</div>}
           {center.list().map((n: NotificationItem) => (
             <div key={n.id} className={"flux-notif flux-" + n.level}>
               <div className="flux-notif-main"><strong>{n.title}</strong>{n.body && <p>{n.body}</p>}<small>{n.owner} · {new Date(n.time).toLocaleTimeString()}</small></div>

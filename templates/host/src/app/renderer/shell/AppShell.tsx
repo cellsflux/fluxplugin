@@ -2,19 +2,34 @@ import { Breadcrumbs, CommandPalette, PluginRoutes, PluginSlot, TitleBar, useKey
 import { APP_NAME, SLOTS } from "../../shared/constants";
 import { Sidebar } from "./Sidebar";
 
-/** Whole window: custom title bar (menus, search, theme, notifications) → sidebar + routed content. */
+/** App shell with a fixed sidebar and independently scrollable content. */
 export function AppShell() {
-  useKeybindings(); // runs commands bound to keyboard shortcuts (Mod+Shift+R, ...)
+  useKeybindings();
+
   return (
     <div className="app">
-      <TitleBar title={APP_NAME} logo={<PluginSlot name={SLOTS.brandBadges} />} searchPlaceholder="Search commands, pages…" />
+      {/* Title bar */}
+      <header className="app-titlebar">
+        <TitleBar title={APP_NAME} logo={<PluginSlot name={SLOTS.brandBadges} />} searchPlaceholder="Search commands, pages…" />
+      </header>
+
+      {/* Application body */}
       <div className="body">
-        <Sidebar />
+        {/* Fixed sidebar: never scrolls with the main content (collapses to an icon rail) */}
+        <aside className="app-side">
+          <Sidebar />
+        </aside>
+
+        {/* Only this area scrolls */}
         <main className="main">
-          <Breadcrumbs />
-          <PluginRoutes />
+          <div className="main-inner">
+            <Breadcrumbs />
+            <PluginRoutes />
+          </div>
         </main>
       </div>
+
+      {/* Command palette */}
       <CommandPalette />
     </div>
   );

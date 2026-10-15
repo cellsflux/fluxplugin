@@ -1,0 +1,10 @@
+{
+  "name": "create-fluxplugin-plugin",
+  "version": "1.0.0",
+  "description": "npm create fluxplugin-plugin my-plugin — a standalone React + TypeScript project for a fluxplugin plugin, with its own dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "create-fluxplugin-plugin": "./index.js" },
+  "files": ["index.js"],
+  "dependencies": { "fluxplugin": "^1.0.0" }
+}

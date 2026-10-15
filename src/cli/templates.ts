@@ -15,7 +15,16 @@ const pkg = (v: TemplateVars) =>
       version: "1.0.0",
       private: true,
       type: "module",
-      scripts: { dev: "fluxplugin dev", build: "fluxplugin build", package: "fluxplugin package", validate: "fluxplugin validate", release: "fluxplugin publish" },
+      scripts: {
+        dev: "fluxplugin dev",
+        "dev:host": "fluxplugin dev --host ../my-app   # run it inside your app while you work (edit the path)",
+        build: "fluxplugin build",
+        package: "fluxplugin package",
+        validate: "fluxplugin validate",
+        release: "fluxplugin publish",
+      },
+      // Add any library here (react-markdown, chart.js, a UI kit…): it is bundled into dist/, the host app does not need it.
+      dependencies: {},
       devDependencies: { fluxplugin: "^1.0.0", "@types/react": "^19.0.0", react: "^19.0.0", typescript: "^5.6.0" },
     },
     null,
@@ -293,4 +302,28 @@ export function withTailwind(files: Record<string, string>, v: TemplateVars): Re
 `;
   files["src/renderer.tsx"] = files["src/renderer.tsx"]!.split(`className="${v.slug}-card"`).join('className="rounded-xl border border-border bg-surface p-4"');
   return files;
+}
+
+/** Extra files when a plugin is its own project (outside an app, or created with --standalone). */
+export function standaloneExtras(v: TemplateVars): Record<string, string> {
+  return {
+    ".gitignore": "node_modules\ndist\n*.tgz\n.DS_Store\n",
+    "CONTRIBUTING.md": `# Developing ${v.name}
+
+This is a normal React + TypeScript project. It has its own \`package.json\` and its own libraries.
+
+\`\`\`bash
+npm install                       # your libraries + fluxplugin tooling
+npm install chart.js              # add anything you need: it is bundled into dist/, the app never needs it
+npm run dev                       # rebuilds on save
+npm run dev:host                  # same, and copies the result into a host app (edit the path) which hot-reloads it
+npm run build                     # dist/ — this is all that ships (no src/, no .ts, no sourcemaps)
+npm run package                   # ${v.id}-1.0.0.tgz
+npm run release                   # publish to the plugin store (GitHub)
+\`\`\`
+
+**Shared with the host** (never bundled twice): \`react\`, \`react-dom\`, \`fluxplugin\`, \`fluxplugin/react\`. Everything else you import is yours.
+CSS imported in the renderer (including from libraries) is emitted as \`dist/renderer.css\` and loaded automatically; images and fonts are inlined.
+`,
+  };
 }

@@ -6,12 +6,14 @@ import { HttpRegistry, LocalRegistry, type PluginRegistry } from "./registry.js"
  * A plugin store, as written in `fluxplugin.config.json` → `"stores"` (or passed to `MainFramework`).
  *  - `github` + `topic`: every repo with that topic that published a release with `fluxplugin publish` (default store)
  *  - `github` + `repo`:  a curated catalog repository ("owner/name") containing `index.json`
- *  - `http`:             any static host serving `index.json` + `.tgz` files (GitHub Pages, S3, your server)
+ *  - `http`:             a static host serving `index.json` + packages/folders (GitHub Pages, S3, your server)
+ *  - `json`:             one URL that returns the catalog as JSON (a file, or your own API); same format as index.json
  *  - `local`:            a folder (network share, checkout)
  */
 export type StoreSpec =
   | { type: "github"; topic?: string; repo?: string; ref?: string; indexPath?: string; name?: string }
-  | { type: "http"; url: string }
+  | { type: "http"; url: string; headers?: Record<string, string> }
+  | { type: "json"; url: string; headers?: Record<string, string> }
   | { type: "local"; path: string };
 
 export const DEFAULT_STORE: StoreSpec = { type: "github", topic: DEFAULT_TOPIC };
@@ -25,7 +27,8 @@ export function createRegistries(specs: StoreSpec[] = [DEFAULT_STORE], opts: { e
       case "github":
         return new GitHubRegistry({ ...s, token, fetchImpl: opts.fetchImpl });
       case "http":
-        return new HttpRegistry(s.url, opts.fetchImpl);
+      case "json":
+        return new HttpRegistry(s.url, opts.fetchImpl, s.headers, s.type === "json");
       case "local":
         return new LocalRegistry(path.resolve(opts.baseDir ?? process.cwd(), s.path));
       default:

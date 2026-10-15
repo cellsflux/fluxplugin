@@ -1,0 +1,32 @@
+{
+  "id": "com.fluxplugin.language",
+  "name": "Language",
+  "version": "1.0.0",
+  "description": "Use the app in English, French, Spanish or German \u2014 and add your own language.",
+  "author": "fluxplugin",
+  "license": "MIT",
+  "icon": "./assets/icon.svg",
+  "readme": "./README.md",
+  "categories": [
+    "Personalization"
+  ],
+  "keywords": [
+    "language",
+    "translation",
+    "i18n",
+    "fran\u00e7ais",
+    "espa\u00f1ol",
+    "deutsch"
+  ],
+  "links": {},
+  "renderer": "./dist/renderer.js",
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": [
+    "ui"
+  ],
+  "engines": {
+    "fluxplugin": "^1.0.0"
+  }
+}

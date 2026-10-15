@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 import type { FluxBridge } from "fluxplugin";
-import { PluginProvider, StyleHost, ThemeProvider, ToastHost, baseCss, type RendererFramework } from "fluxplugin/react";
+import { I18nProvider, PluginProvider, SidebarProvider, StyleHost, ThemeProvider, ToastHost, baseCss, type RendererFramework } from "fluxplugin/react";
 import { setTitleBarOverlay } from "../services/window";
 
 const BridgeContext = createContext<FluxBridge | null>(null);
@@ -20,10 +20,14 @@ export function AppProviders({ framework, bridge, children }: { framework: Rende
       <BridgeContext.Provider value={bridge}>
         <style>{baseCss}</style>
         <StyleHost />
-        <ThemeProvider onResolved={onResolved}>
-          {children}
-          <ToastHost />
-        </ThemeProvider>
+        <I18nProvider>
+          <ThemeProvider onResolved={onResolved}>
+            <SidebarProvider>
+              {children}
+              <ToastHost />
+            </SidebarProvider>
+          </ThemeProvider>
+        </I18nProvider>
       </BridgeContext.Provider>
     </PluginProvider>
   );

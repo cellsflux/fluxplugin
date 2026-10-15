@@ -251,6 +251,62 @@ Authors work in TypeScript (`src/`), but what is **installed and shipped** is on
 through the Plugin Manager / registries copy *only* these files — never `src/`, `.ts/.tsx`, sourcemaps, `node_modules`, configs.
 Add `--sign-key` to sign the package (ed25519) and set `trustedKeys` + `requireSignature` in `framework.ts` to refuse the rest.
 
+## 9. Settings, languages and fonts
+
+**Settings screen** (`/settings/:section`, macOS "System Settings" look). Sections are contributed to the `settings` extension point:
+```ts
+extensions: [{ point: "settings", contribution: { sections: [{ id: "billing", title: "Billing", icon: "info", order: 30, component: BillingSettings }] } }]
+```
+The app ships two plugins that do exactly this: **Appearance** (mode, themes, accent, font, text size, spacing, corners, translucency,
+reduced motion) and **Language**. Remove or replace them freely: they are ordinary plugins in `plugins/`.
+
+**Fonts** — users pick a family, type any installed font name, and set size / line spacing; plugins add fonts:
+`extensions: [{ point: "font", contribution: { fonts: [{ id: "brand", label: "Brand", stack: '"Brand Sans", sans-serif', css: "@font-face{…}" }] } }]`.
+In code: `const { appearance, setAppearance } = useAppearance()` (accent, fontId, customFont, fontSize, lineHeight, density, radius, translucency, reduceMotion).
+
+**Languages** — `useT()("key", "English fallback")` everywhere; plugins contribute languages and translations to the `i18n` point
+(`{ languages: [{ code: "ar", label: "Arabic", nativeLabel: "العربية", rtl: true }] }`, `{ messages: [{ locale: "ar", messages: {…} }] }`).
+Missing keys fall back to English. Host entries are translated with `menu.<id>` keys (`menu.dashboard`).
+
+## 10. Sidebar: icons, collapse, sub-menus
+The sidebar collapses to an icon rail (button at the bottom, `Ctrl/Cmd+B`; state persisted; sub-menus become hover flyouts).
+Plugins add entries and sub-menus:
+```ts
+routes: [{ path: "/reports", component: Reports, meta: { title: "Reports", menu: { label: "Reports", icon: "grid", order: 20 } } },
+         { path: "/reports/sales", component: Sales, meta: { menu: { label: "Sales", parent: "route:/reports" } } }]   // parent = menu id
+menus: [{ id: "tools", location: "sidebar", label: "Tools", icon: { d: "M…svg path…" }, children: [{ id: "t1", label: "Sync", path: "/sync" }] }]
+```
+`icon` is a built-in name (`home`, `plug`, `settings`, `palette`…), `{ d: "<svg path>" }` or any React node. Unknown `parent` ids fall back to the top level.
+The shell uses `grid-cols-[var(--flux-sidebar-w,232px)_minmax(0,1fr)]` so the content area follows the collapse.
+
+## 11. Images and video — any source
+```tsx
+<Img src="https://…" />   <Img src="data:image/png;base64,…" />   <Img src={rawBase64} />   <Img src={blobUrl} />   <Img src={file /* Blob | File | Uint8Array */} />
+<Img src="C:\\Users\\me\\a.png" />   <Img src="/home/me/a.png" />   <Img src="assets/shot.png" base={pluginAssetBase} />
+```
+Allowed: http(s), `data:image/*`, raw base64 (type detected from the bytes), `blob:`, `file:`/local paths, relative paths (with `base`), Blob/File/ArrayBuffer.
+Rejected: `javascript:` and other schemes. Failing images show a placeholder. Markdown images use the same rules.
+`<VideoPlayer video={parseVideo(url)} />`: **YouTube, Vimeo, Dailymotion, Loom, Streamable** → sandboxed iframe; **mp4 / webm / ogg / mov** (https, or a file inside the plugin such as
+`"video": "./assets/tour.mp4"`) → native HTML5 player with seeking; anything else → a link. Your CSP must list the iframe hosts (the generated `index.html` does).
+
+## 12. Build, ship, export
+```bash
+npm run build              # app + all plugins (no sourcemaps)
+npm run dist               # installer/executable for this OS (electron-builder): npm run dist -- --win --mac --linux
+npm run dist -- --unpacked # just the unpacked app folder (fast check)
+npm run export:web         # static website in ./website (renderer + plugin files + bootstrap.json); serve with any static host
+npm run plugins:package    # every plugin → release/plugins/*.tgz (runtime files only)
+```
+Bundled plugins are staged **runtime-only** (`.flux-build/plugins`: `plugin.json`, `dist/`, `assets/`, README) — no `src/`, no `.ts`, no `.map`.
+User-installed plugins live in the app's data folder; `deleteAppDataOnUninstall: true` (Windows) removes them with the app. macOS has no uninstaller:
+drag-to-Trash leaves `~/Library/Application Support/<app>`. The static export runs only the browser side (main-process plugin code and IPC are unavailable).
+
+## 13. Plugins are normal projects
+`npm create fluxplugin-plugin my-plugin` (or `npx fluxplugin plugin new my-plugin --standalone`) creates a React + TypeScript project with **its own
+`package.json` and libraries**. Install anything (`npm i chart.js react-markdown …`): it is bundled into `dist/`, so the host app needs nothing.
+Only `react`, `react-dom`, `fluxplugin` and `fluxplugin/react` are shared with the host. CSS imported by the plugin or its libraries becomes `dist/renderer.css`
+(auto-listed in the manifest); images and fonts are inlined. `npm run dev:host` rebuilds on save and syncs the runtime files into a running host app, which hot-reloads them.
+
 ## 9. Plugin stores (marketplace)
 
 Where *Plugins → Available* looks is your choice: the default GitHub store, your own catalog (HTTP/GitHub/local), or code of your own.

@@ -88,7 +88,21 @@ export interface RegistryEntryLike {
   sha256?: string;
   homepage?: string;
   stars?: number;
-  icon?: string;
+  /** Store metadata (everything a "store page" needs, straight from the catalog). */
+  iconUrl?: string;
+  bannerUrl?: string;
+  screenshots?: string[];
+  video?: string;
+  categories?: string[];
+  keywords?: string[];
+  links?: Record<string, string>;
+  license?: string;
+  /** Markdown (inline in the catalog). */
+  readme?: string;
+  /** Set by the app when the plugin is already installed locally. */
+  installedVersion?: string;
+  folder?: boolean;
+  files?: string[];
 }
 
 /** Everything a UI needs to render a plugin "store page": icon, banner, screenshots, video, long description. */
@@ -107,7 +121,9 @@ export interface PluginDetails {
   iconUrl?: string;
   bannerUrl?: string;
   screenshotUrls: string[];
-  video?: { url: string; embedUrl?: string };
+  video?: import("./manifest.js").VideoInfo;
+  /** Base URL of the plugin's files (to resolve relative images/videos). */
+  assetBase?: string;
   /** Markdown source of the long description (rendered by the UI without raw HTML). */
   readme?: string;
 }

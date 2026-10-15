@@ -5,6 +5,8 @@ import { registerOperations } from "./operations";
 
 export interface FrameworkOptions {
   pluginDirs: string[];
+  /** Where "Get" installs plugins (default: the last of pluginDirs). */
+  installDir?: string;
   dataDir: string;
   dev?: boolean;
   assetUrl?: (id: string, rel: string) => string;
@@ -14,6 +16,7 @@ export interface FrameworkOptions {
 export function createFramework(opts: FrameworkOptions): MainFramework {
   const fw = new MainFramework({
     pluginDirs: opts.pluginDirs,
+    installDir: opts.installDir ?? opts.pluginDirs[opts.pluginDirs.length - 1],
     dataDir: opts.dataDir,
     hotReload: opts.dev,
     assetUrl: opts.assetUrl,

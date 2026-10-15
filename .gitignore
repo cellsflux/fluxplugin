@@ -1,5 +1,5 @@
 node_modules
 dist
-.web-data
-.epf-data
+.flux-data
 *.tgz
+website/public/screenshots

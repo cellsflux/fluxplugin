@@ -86,6 +86,25 @@ jobs:
 ```
 (The built-in token can create releases but not edit topics; add the topic `fluxplugin-plugin` once in the repo settings.)
 
+## B2. A catalog repository (folders + one JSON) — GitHub, any host, or an API
+
+Besides the topic store, a store can be **a repository of plugin folders and a single JSON that holds all their metadata**:
+```
+acme/plugin-store
+├─ plugins/
+│  ├─ weather/   plugin.json · dist/ · assets/ · README.md   (src/ may be there; it is never listed or downloaded)
+│  └─ notes/     …
+└─ index.json    ← generated: id, name, version, description, permissions, icon, screenshots, video, readme, files + sha256 of every file
+```
+```bash
+npx fluxplugin store build .          # builds index.json from plugins/*/plugin.json (commit it; run it in CI on every change)
+```
+Point the app at it: `{ "type": "github", "repo": "acme/plugin-store" }` (reads `index.json` from the repo), **or** any link that returns the JSON:
+`{ "type": "json", "url": "https://api.acme.com/plugins" }` / `{ "type": "http", "url": "https://acme.github.io/store/index.json" }`.
+Entries are either packages (`url` + `sha256`) or folders (`folder` + `files` + `hashes`); relative URLs resolve against the JSON. The app asks the store first, then
+compares each entry with what is installed locally (*Installed / Update / Get*). Every downloaded file is verified against its hash.
+`fluxplugin init my-app --store github:acme/plugin-store` writes this into `fluxplugin.config.json`.
+
 ## C. Install from the store
 
 * **In an app**: *Plugins → Available* lists plugins with their permissions; **Install**. Enabled automatically (or after the user approves permissions when your app uses `requireApproval`).

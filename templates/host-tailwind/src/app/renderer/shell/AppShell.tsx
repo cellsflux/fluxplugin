@@ -21,12 +21,12 @@ export function AppShell() {
         <TitleBar
           title={APP_NAME}
           logo={<PluginSlot name={SLOTS.brandBadges} />}
-          searchPlaceholder="Search commands, pages…"
+          searchPlaceholder="Search commands, pages..."
         />
       </header>
 
-      {/* Application body */}
-      <div className="body grid min-h-0 min-w-0 grid-cols-[220px_minmax(0,1fr)] overflow-hidden">
+      {/* Application body (the sidebar width follows --flux-sidebar-w: it collapses to an icon rail) */}
+      <div className="body grid min-h-0 min-w-0 grid-cols-[var(--flux-sidebar-w,232px)_minmax(0,1fr)] overflow-hidden transition-[grid-template-columns] duration-200">
         {/* Fixed sidebar: never scrolls with the main content */}
         <aside className="h-full min-h-0 overflow-hidden border-r border-transparent">
           <Sidebar />

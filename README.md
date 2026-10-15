@@ -43,7 +43,16 @@ Custom **title bar + menu bar** that adapts to macOS / Windows / Linux · **sear
 store-style page per plugin (icon, screenshots, YouTube video, Markdown description) · plugins shipped as **JavaScript only** ·
 optional **Tailwind v4** · permissions, signatures, rollback · a **plugin store** (GitHub by default, or your own) with `fluxplugin publish`.
 
+## New in this version
+macOS-style design (translucent materials, grouped lists, switches) · **Settings** screen with **Appearance** and **Language** plugins included ·
+fully customizable fonts/size/spacing/accent/themes · collapsible **sidebar with icons and sub-menus** · plugin pages like an app store
+(separate screen, screenshots, video, iOS-style Markdown) · images from any source · YouTube/Vimeo/Dailymotion/Loom/Streamable/HTML5 video ·
+catalog stores (GitHub repo of plugin folders + one JSON, or any JSON link) · `fluxplugin dist` / `export` / `store build` / `package --all` ·
+plugins as standalone projects with their own libraries (`npm create fluxplugin-plugin`).
+
 ## Docs
+**Documentation website** (React + Vite, searchable): `website/` — `cd website && npm install && npm run dev` · deploy guide in `website/README.md`.
+
 **[STORE](docs/STORE.md)** (develop → publish → install; your own store) · **[CUSTOMIZING](docs/CUSTOMIZING.md)** (add your own APIs, permissions, hooks, title/menu bar, search, notifications, themes, Tailwind) ·
 [PLUGIN-AUTHORS](docs/PLUGIN-AUTHORS.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [RELEASE](docs/RELEASE.md)
 
@@ -60,16 +69,10 @@ plugins/      loaded at startup
 ```
 
 ## Status — read this
-* **Verified:** ~140 automated tests and strict typecheck; the packed tarball installed into freshly generated apps (default and
-  `--tailwindcss`) → build → run; the generated app run in **real Electron 44** (Linux/Xvfb) *with Electron's install script blocked*
-  (auto-download works): custom title bar, plugin menus, search, notifications, theme, plugin page (icon/README), no Node leak
-  into the page; a Playwright E2E in a browser with 3 plugins.
-* **Store:** publish → search → install is tested end to end against an in-process imitation of the GitHub API (release, asset upload,
-  topics, checksum, tampering, rate limit, pruning of `.map`/`.ts`), the GitHub search request shape was confirmed against the real API
-  (read-only, HTTP 200), and installing from a custom HTTP store was run through the app's UI. **`fluxplugin publish` itself has not been run
-  against real github.com** (no credentials here): try it with `--dry-run` first, then on a throw-away repository.
-* **Not verified:** Windows and macOS runs (only Linux was available — the OS-specific branches follow Electron's documented API:
-  `hiddenInset` on macOS, `titleBarOverlay` on Windows/Linux); installers/auto-update (electron-builder/forge not set up);
-  YouTube playback itself (no internet video in the test environment — the embed URL and sandboxed iframe are asserted).
+* **Verified:** strict typecheck; ~170 automated tests; `publint` clean and `are-the-types-wrong` green (ESM/bundler); the packed tarball installed into a generated
+  app (with Tailwind) → typecheck → build (host + 3 plugins) → run in a real browser: collapsing sidebar, language switch via the Language plugin, font/size/accent/theme
+  via the Appearance plugin, plugin details as a separate screen with navigation, Markdown tables. Earlier rounds ran the app in real Electron 44 (Linux, Xvfb).
+* **Not re-run in this round:** Electron after the latest UI changes, `fluxplugin dist` (electron-builder installers) and `fluxplugin export` end to end, Windows/macOS,
+  playback of YouTube/Dailymotion/Loom (embed URLs and sandboxed iframes are asserted, not played), and `fluxplugin publish` against real github.com.
 * **Not published** on npm — see `docs/RELEASE.md`. **Security:** plugin `main` code is not sandboxed (see `docs/SECURITY.md`).
-* **Not done:** per-plugin process isolation, hosted marketplace (only `PluginRegistry` + local/HTTP), OS-level (native) notifications.
+* **Not done:** per-plugin process isolation, hosted marketplace service, native (OS) notifications, translations of permission titles (English fallback).

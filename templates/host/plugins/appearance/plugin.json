@@ -1,0 +1,30 @@
+{
+  "id": "com.fluxplugin.appearance",
+  "name": "Appearance",
+  "version": "1.0.0",
+  "description": "Themes, accent colors, fonts, text size, density and more \u2014 everything about how the app looks.",
+  "author": "fluxplugin",
+  "license": "MIT",
+  "icon": "./assets/icon.svg",
+  "readme": "./README.md",
+  "categories": [
+    "Personalization"
+  ],
+  "keywords": [
+    "theme",
+    "font",
+    "accent",
+    "dark mode"
+  ],
+  "links": {},
+  "renderer": "./dist/renderer.js",
+  "activationEvents": [
+    "onStartup"
+  ],
+  "permissions": [
+    "ui"
+  ],
+  "engines": {
+    "fluxplugin": "^1.0.0"
+  }
+}

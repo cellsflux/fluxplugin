@@ -1,144 +1,346 @@
-import React, { useCallback, useEffect, useState } from "react";
-import type { LogEntry, PluginDetails, PluginInfo, RegistryEntryLike, SchemaDescription } from "../core/index.js";
-import { Icon, Markdown, PluginSlot, usePluginFramework, usePlugins } from "../react/index.js";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LogEntry, PluginDetails, PluginInfo, RegistryEntryLike, SchemaDescription, VideoInfo } from "../core/index.js";
+import { parseVideo } from "../core/index.js";
+import { Button, Group, Icon, Img, Markdown, PluginSlot, Row, Segmented, Switch, VideoPlayer, navigate, usePlugin, usePluginFramework, usePlugins, useParams, useT, type RendererFramework } from "../react/index.js";
 
-const css = `.fluxm{font:14px system-ui;color:var(--flux-fg,#0f172a)}.fluxm h2{margin:0 0 12px}.fluxm-tabs{display:flex;gap:6px;margin-bottom:12px}
-.fluxm button{cursor:pointer;border:1px solid var(--flux-border,#e2e8f0);background:var(--flux-surface,#f8fafc);color:inherit;border-radius:8px;padding:5px 10px}
-.fluxm button.on{background:var(--flux-accent,#4f46e5);color:#fff;border-color:transparent}.fluxm button.danger{color:#dc2626}
-.fluxm-row{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--flux-border,#e2e8f0);border-radius:10px;margin-bottom:8px}
-.fluxm-grow{flex:1;min-width:0}.fluxm-muted{color:var(--flux-muted,#64748b);font-size:12px}
-.fluxm-badge{font-size:11px;padding:1px 8px;border-radius:99px;background:#e2e8f0;color:#334155}.fluxm-ready{background:#dcfce7;color:#166534}.fluxm-error{background:#fee2e2;color:#991b1b}.fluxm-disabled{background:#f1f5f9;color:#64748b}
-.fluxm-panel{border:1px solid var(--flux-border,#e2e8f0);border-radius:12px;padding:14px;margin-top:12px}.fluxm pre{max-height:180px;overflow:auto;font-size:11px;background:var(--flux-surface,#f8fafc);padding:8px;border-radius:8px}
-.fluxm label{display:flex;gap:8px;align-items:center;margin:6px 0}.fluxm input[type=text],.fluxm input[type=number]{padding:4px 8px;border:1px solid var(--flux-border,#e2e8f0);border-radius:6px}`;
+/* -------------------------------------------------------------- shared model */
 
-const badge = (p: PluginInfo) => <span className={`fluxm-badge fluxm-${p.state === "ready" ? "ready" : p.state === "error" ? "error" : p.state === "disabled" ? "disabled" : ""}`}>{p.state}</span>;
+/** Everything the "app page" of a plugin needs, whether it is installed or only listed in a store. */
+export interface PluginView {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  license?: string;
+  iconUrl?: string;
+  bannerUrl?: string;
+  screenshots: string[];
+  video?: VideoInfo;
+  categories: string[];
+  keywords: string[];
+  links: Record<string, string>;
+  readme?: string;
+  permissions: string[];
+  dependencies: Record<string, string>;
+  /** Base URL used to resolve relative images in the README. */
+  assetBase?: string;
+  homepage?: string;
+}
 
-/** Auto-generated settings form from a plugin's config schema (`ctx.config.describe()`). */
+const RISKY = new Set(["network", "filesystem.read", "filesystem.write", "shell", "database", "clipboard", "window"]);
+const PERMISSIONS: Record<string, [string, string]> = {
+  ipc: ["Talk to the app's background process", "Call and answer background tasks."],
+  services: ["Share and use services", "Offer features to other plugins and use theirs."],
+  events: ["Send and receive events", "React to what happens in the app."],
+  hooks: ["Change how the app behaves", "Intercept, validate or modify operations."],
+  commands: ["Add commands", "Appear in the command palette and menus, with shortcuts."],
+  routes: ["Add pages", "Create its own screens in the app."],
+  menus: ["Add menu entries", "Appear in the menu bar and sidebar."],
+  ui: ["Add interface elements", "Place widgets and buttons in the app."],
+  styles: ["Style the interface", "Add its own look."],
+  storage: ["Save its own data", "Keep settings and data on this device."],
+  notifications: ["Show notifications", "Alert you inside the app."],
+  network: ["Use the network", "Connect to the internet."],
+  "filesystem.read": ["Read files", "Open files on your computer."],
+  "filesystem.write": ["Write files", "Create or change files on your computer."],
+  database: ["Use the database", "Read and write the app's data."],
+  window: ["Control windows", "Open, move or resize windows."],
+  clipboard: ["Use the clipboard", "Copy and paste for you."],
+  shell: ["Run system commands", "Launch programs on your computer."],
+};
+const permInfo = (p: string): [string, string] => PERMISSIONS[p] ?? (p.startsWith("x.") ? [`Custom access: ${p.slice(2)}`, "A capability defined by this app."] : [p, ""]);
+
+const fromDetails = (d: PluginDetails, info: PluginInfo, assetBase?: string): PluginView => ({
+  id: d.id, name: d.name, version: d.version, description: d.description, author: d.author, license: d.license, iconUrl: d.iconUrl, bannerUrl: d.bannerUrl,
+  screenshots: d.screenshotUrls, video: d.video, categories: d.categories, keywords: d.keywords, links: d.links, readme: d.readme,
+  permissions: info.permissions.declared, dependencies: info.dependencies, assetBase, homepage: d.homepage,
+});
+const fromEntry = (e: RegistryEntryLike): PluginView => ({
+  id: e.id, name: e.name, version: e.version, description: e.description, author: e.author, license: e.license, iconUrl: e.iconUrl, bannerUrl: e.bannerUrl,
+  screenshots: e.screenshots ?? [], video: parseVideo(e.video) ?? undefined, categories: e.categories ?? [], keywords: e.keywords ?? [], links: e.links ?? {}, readme: e.readme,
+  permissions: e.permissions, dependencies: {}, assetBase: e.location, homepage: e.homepage,
+});
+
+/** Last store listing, so a store entry page opens instantly after clicking a row. */
+let storeCache: RegistryEntryLike[] = [];
+
+const stateLabel = (p: PluginInfo): [string, string] => (p.state === "ready" ? ["Active", "ok"] : p.state === "error" ? ["Error", "err"] : p.state === "disabled" ? ["Disabled", ""] : [p.state, ""]);
+
+function Icon56({ url, base, large }: { url?: string; base?: string; large?: boolean }): React.ReactElement {
+  return <Img className={"flux-pm-icon" + (large ? " lg" : "")} src={url} base={base} alt="" fallback={<span className={"flux-pm-icon" + (large ? " lg" : "")} style={{ background: "var(--flux-accent)", color: "#fff", alignItems: "center", justifyContent: "center" }}><Icon name="plug" size={large ? 44 : 24} /></span>} />;
+}
+
+function useDetails(id: string) {
+  const { client } = usePluginFramework();
+  const [d, setD] = useState<PluginDetails>();
+  const info = usePlugin(id);
+  useEffect(() => {
+    let live = true;
+    setD(undefined);
+    client.details(id).then((x) => live && setD(x)).catch(() => undefined);
+    return () => { live = false; };
+  }, [client, id, info?.version]);
+  return { d, info };
+}
+
+/* ------------------------------------------------------------------- body */
+
+function Facts({ v, extra }: { v: PluginView; extra?: [string, string][] }): React.ReactElement {
+  const items: [string, string][] = [["Category", v.categories[0] ?? "Plugin"], ["Version", v.version], ["License", v.license ?? "—"], ["Developer", v.author ?? "—"], ["Access", `${v.permissions.length}`], ...(extra ?? [])];
+  return <div className="flux-pm-facts">{items.map(([k, val]) => <div className="flux-pm-fact" key={k}><small>{k}</small><b>{val}</b></div>)}</div>;
+}
+
+function Gallery({ v }: { v: PluginView }): React.ReactElement | null {
+  const [zoom, setZoom] = useState<string>();
+  if (!v.screenshots.length) return null;
+  return (
+    <>
+      <h3 className="sec">Preview</h3>
+      <div className="flux-pm-shots" data-testid="plugin-shots">
+        {v.screenshots.map((u) => <Img key={u} src={u} base={v.assetBase} alt="screenshot" onClick={() => setZoom(u)} />)}
+      </div>
+      {zoom && <div className="flux-zoom" onClick={() => setZoom(undefined)}><Img src={zoom} base={v.assetBase} alt="" /></div>}
+    </>
+  );
+}
+
+function Body({ v, permissionsSlot }: { v: PluginView; permissionsSlot?: (perm: string) => React.ReactNode }): React.ReactElement {
+  const t = useT();
+  return (
+    <>
+      {v.bannerUrl && <Img className="flux-pm-banner" src={v.bannerUrl} base={v.assetBase} alt="" />}
+      <Gallery v={v} />
+      {v.video && <><h3 className="sec">{t("plugins.video", "Video")}</h3><VideoPlayer video={v.video} poster={undefined} title={`${v.name} video`} /></>}
+      {v.readme && <><h3 className="sec">{t("plugins.about", "About")}</h3><div data-testid="plugin-readme"><Markdown source={v.readme} baseUrl={v.assetBase} /></div></>}
+      <h3 className="sec">{t("plugins.permissions", "Permissions")}</h3>
+      <Group footer={t("plugins.permissionsFooter", "Plugins only get what they declare. Risky access is highlighted.")}>
+        {v.permissions.length === 0 && <Row title={t("plugins.noPermissions", "No special access")} />}
+        {v.permissions.map((p) => {
+          const [title, desc] = permInfo(p);
+          return <Row key={p} icon={RISKY.has(p) ? "shield" : "check"} iconColor={RISKY.has(p) ? "var(--flux-warn)" : "var(--flux-ok)"} title={t(`perm.${p}`, title)} subtitle={desc} right={permissionsSlot?.(p) ?? (RISKY.has(p) ? <span className="flux-pill warn">{t("plugins.sensitive", "Sensitive")}</span> : undefined)} />;
+        })}
+      </Group>
+      <h3 className="sec">{t("plugins.information", "Information")}</h3>
+      <Group>
+        <Row title={t("plugins.developer", "Developer")} right={v.author ?? "—"} />
+        <Row title={t("plugins.version", "Version")} right={v.version} />
+        <Row title={t("plugins.license", "License")} right={v.license ?? "—"} />
+        <Row title="ID" right={<code>{v.id}</code>} />
+        {Object.keys(v.dependencies).length > 0 && <Row title={t("plugins.dependencies", "Requires")} right={Object.entries(v.dependencies).map(([k, r]) => `${k} ${r}`).join(", ")} />}
+        {v.keywords.length > 0 && <Row title={t("plugins.keywords", "Keywords")} right={v.keywords.join(", ")} />}
+        {Object.entries(v.links).map(([k, u]) => <Row key={k} icon="external" iconColor="var(--flux-muted)" title={k[0]!.toUpperCase() + k.slice(1)} right={<a href={u} target="_blank" rel="noopener noreferrer">{new URL(u).hostname}</a>} />)}
+        {v.homepage && <Row icon="external" iconColor="var(--flux-muted)" title="Source" right={<a href={v.homepage} target="_blank" rel="noopener noreferrer">{new URL(v.homepage).hostname}</a>} />}
+      </Group>
+    </>
+  );
+}
+
+/** Auto-generated settings form from the plugin's config schema. */
 export function ConfigForm({ id }: { id: string }): React.ReactElement | null {
   const { client } = usePluginFramework();
+  const t = useT();
   const [schema, setSchema] = useState<SchemaDescription | null>(null);
   const [values, setValues] = useState<Record<string, any>>({});
   const [msg, setMsg] = useState("");
   useEffect(() => { client.configSchema(id).then(setSchema).catch(() => setSchema(null)); client.configGet(id).then(setValues).catch(() => undefined); }, [client, id]);
   if (!schema?.properties) return null;
-  const save = (patch: Record<string, unknown>) => client.configSet(id, patch).then((v) => (setValues(v), setMsg("Saved"))).catch((e) => setMsg(String(e.message)));
+  const save = (patch: Record<string, unknown>) => client.configSet(id, patch).then((v) => (setValues(v), setMsg(t("plugins.saved", "Saved")))).catch((e: Error) => setMsg(e.message));
   return (
-    <div className="fluxm-panel"><strong>Settings</strong>
-      {Object.entries(schema.properties).map(([k, d]) => (
-        <label key={k}><span style={{ minWidth: 120 }}>{d.title ?? k}</span>
-          {d.type === "boolean" ? <input type="checkbox" checked={!!values[k]} onChange={(e) => save({ [k]: e.target.checked })} />
-            : d.type === "enum" ? <select value={values[k] ?? ""} onChange={(e) => save({ [k]: e.target.value })}>{d.enum?.map((o) => <option key={String(o)}>{String(o)}</option>)}</select>
-            : <input type={d.type === "number" ? "number" : "text"} value={values[k] ?? ""} onChange={(e) => setValues({ ...values, [k]: d.type === "number" ? Number(e.target.value) : e.target.value })} onBlur={() => save({ [k]: values[k] })} />}
-        </label>))}
-      <div className="fluxm-muted">{msg}</div><button onClick={() => client.configReset(id).then(setValues)}>Reset to defaults</button>
-    </div>);
+    <>
+      <h3 className="sec">{t("plugins.settings", "Settings")}</h3>
+      <Group footer={msg || undefined}>
+        {Object.entries(schema.properties).map(([k, d]) => (
+          <Row key={k} title={d.title ?? k} subtitle={d.description} right={
+            d.type === "boolean" ? <Switch checked={!!values[k]} onChange={(v) => void save({ [k]: v })} label={d.title ?? k} />
+            : d.type === "enum" ? <select className="flux-select" value={values[k] ?? ""} onChange={(e) => void save({ [k]: e.target.value })}>{d.enum?.map((o) => <option key={String(o)}>{String(o)}</option>)}</select>
+            : <input className="flux-input" style={{ width: 160 }} type={d.type === "number" ? "number" : "text"} value={values[k] ?? ""} onChange={(e) => setValues({ ...values, [k]: d.type === "number" ? Number(e.target.value) : e.target.value })} onBlur={() => void save({ [k]: values[k] })} />} />
+        ))}
+        <Row title={t("plugins.reset", "Reset to defaults")} onClick={() => void client.configReset(id).then(setValues)} />
+      </Group>
+    </>
+  );
 }
 
-const css2 = `.fluxm-icon{width:40px;height:40px;border-radius:10px;object-fit:cover;background:var(--flux-border);display:inline-flex;align-items:center;justify-content:center;flex:none}
-.fluxm-banner{width:100%;max-height:180px;object-fit:cover;border-radius:10px;margin:8px 0}.fluxm-shots{display:flex;gap:8px;overflow:auto;padding:4px 0}.fluxm-shots img{height:110px;border-radius:8px;border:1px solid var(--flux-border);cursor:zoom-in}
-.fluxm-video{aspect-ratio:16/9;width:100%;max-width:560px;border:0;border-radius:10px;background:#000}.fluxm-chip{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;background:var(--flux-surface);border:1px solid var(--flux-border);margin:0 4px 4px 0}
-.fluxm-zoom{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out}.fluxm-zoom img{max-width:92vw;max-height:90vh;border-radius:10px}
-.fluxm h3{margin:16px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--flux-muted)}`;
-
-/** Plugin icon (from `manifest.icon`) with a fallback glyph. Loaded lazily through the details API. */
-function PluginIcon({ id, url }: { id: string; url?: string }): React.ReactElement {
-  const [broken, setBroken] = useState(false);
-  return url && !broken ? <img className="fluxm-icon" src={url} alt="" data-testid={"icon-" + id} onError={() => setBroken(true)} /> : <span className="fluxm-icon"><Icon name="plug" size={20} /></span>;
-}
-
-function Details({ p, onClose }: { p: PluginInfo; onClose: () => void }): React.ReactElement {
+function Logs({ id, state }: { id: string; state: string }): React.ReactElement {
   const { client } = usePluginFramework();
+  const t = useT();
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [d, setD] = useState<PluginDetails>();
-  const [zoom, setZoom] = useState<string>();
-  useEffect(() => { client.logs(p.id).then(setLogs).catch(() => undefined); }, [client, p.id, p.state]);
-  useEffect(() => { setD(undefined); client.details(p.id).then(setD).catch(() => undefined); }, [client, p.id, p.version]);
+  useEffect(() => { client.logs(id).then(setLogs).catch(() => undefined); }, [client, id, state]);
   return (
-    <div className="fluxm-panel" data-testid="plugin-details">
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <PluginIcon id={p.id} url={d?.iconUrl} />
-        <div className="fluxm-grow"><strong>{p.name}</strong> <span className="fluxm-muted">{p.id}@{p.version}</span>
-          <div className="fluxm-muted">{[d?.author, d?.license].filter(Boolean).join(" · ")}</div></div>
-        <button onClick={onClose}>Close</button>
-      </div>
-      <div>{d?.categories.map((c) => <span key={c} className="fluxm-chip">{c}</span>)}{d?.keywords.map((c) => <span key={c} className="fluxm-chip">#{c}</span>)}</div>
-      {d?.bannerUrl && <img className="fluxm-banner" src={d.bannerUrl} alt="" />}
-      <p>{p.description}</p>
-      {p.error && <p className="fluxm-error fluxm-badge">{p.error.phase}: {p.error.message}</p>}
-      {d?.video && (<><h3>Video</h3>{d.video.embedUrl
-        ? <iframe className="fluxm-video" data-testid="plugin-video" src={d.video.embedUrl} title="Plugin video" allow="encrypted-media; picture-in-picture; fullscreen" sandbox="allow-scripts allow-same-origin allow-presentation" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen />
-        : <a href={d.video.url} target="_blank" rel="noopener noreferrer"><Icon name="play" /> Watch the video</a>}</>)}
-      {!!d?.screenshotUrls.length && (<><h3>Screenshots</h3><div className="fluxm-shots" data-testid="plugin-shots">{d.screenshotUrls.map((u) => <img key={u} src={u} alt="screenshot" onClick={() => setZoom(u)} />)}</div></>)}
-      {d?.readme && (<><h3>About</h3><div data-testid="plugin-readme"><Markdown source={d.readme} /></div></>)}
-      {d && Object.keys(d.links).length > 0 && (<><h3>Links</h3>{Object.entries(d.links).map(([k, u]) => <div key={k}><a href={u} target="_blank" rel="noopener noreferrer">{k}</a></div>)}</>)}
-      <h3>Permissions</h3>
-      {p.permissions.declared.length === 0 && <div className="fluxm-muted">none requested</div>}
-      {p.permissions.declared.map((perm) => { const on = p.permissions.granted.includes(perm); return (
-        <label key={perm}><input type="checkbox" checked={on} onChange={() => (on ? client.revoke(p.id, perm) : client.grant(p.id, perm))} />{perm}</label>); })}
-      <div><strong>Dependencies</strong> <span className="fluxm-muted">{Object.entries(p.dependencies).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}</span></div>
-      <div><strong>Required by</strong> <span className="fluxm-muted">{p.dependents.join(", ") || "nobody"}</span></div>
-      <ConfigForm id={p.id} />
-      <PluginSlot name="manager.plugin.details" props={{ plugin: p }} />
-      <h3>Logs</h3><pre>{logs.map((l) => `${new Date(l.time).toLocaleTimeString()} ${l.level.toUpperCase()} ${l.message}`).join("\n") || "no logs"}</pre>
-      {zoom && <div className="fluxm-zoom" onClick={() => setZoom(undefined)}><img src={zoom} alt="" /></div>}
-    </div>);
+    <details style={{ marginTop: 26 }}>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>{t("plugins.logs", "Logs")} ({logs.length})</summary>
+      <pre className="flux-pre">{logs.map((l) => `${new Date(l.time).toLocaleTimeString()} ${l.level.toUpperCase()} ${l.message}`).join("\n") || t("plugins.noLogs", "No logs")}</pre>
+    </details>
+  );
 }
 
-function PluginIconLazy({ id }: { id: string }): React.ReactElement {
+/* ------------------------------------------------------------------- pages */
+
+const back = (): void => (history.length > 1 ? history.back() : navigate("/plugins"));
+
+/** Detail screen of an installed plugin (route `/plugins/:id`). */
+export function PluginDetailsPage(): React.ReactElement {
+  const t = useT();
   const { client } = usePluginFramework();
-  const [url, setUrl] = useState<string>();
-  useEffect(() => { client.details(id).then((d) => setUrl(d.iconUrl)).catch(() => undefined); }, [client, id]);
-  return <PluginIcon id={id} url={url} />;
+  const { id = "" } = useParams();
+  const { d, info } = useDetails(id);
+  const [busy, setBusy] = useState("");
+  const run = async (label: string, fn: () => Promise<unknown>, after?: () => void) => { setBusy(label); try { await fn(); after?.(); } catch (e) { alert((e as Error).message); } finally { setBusy(""); } };
+  if (!info) return <div className="flux-pm"><button className="flux-pm-back" onClick={back}><Icon name="back" size={20} />{t("plugins.back", "Plugins")}</button><div className="flux-empty">{t("plugins.notFound", "This plugin is not installed.")}</div></div>;
+  const view: PluginView | undefined = d ? fromDetails(d, info, d.assetBase) : undefined;
+  const [stateText, cls] = stateLabel(info);
+  return (
+    <div className="flux-pm" data-testid="plugin-details">
+      <button className="flux-pm-back" onClick={back} data-testid="plugin-back"><Icon name="back" size={20} />{t("plugins.back", "Plugins")}</button>
+      <div className="flux-pm-hero">
+        <Icon56 url={d?.iconUrl} large />
+        <div>
+          <h1>{info.name}</h1>
+          <div className="by">{info.author ?? info.id} · <span className={"flux-pill " + cls}>{t(`state.${info.state}`, stateText)}</span></div>
+          <div className="flux-pm-actions">
+            <Switch checked={info.enabled} label={t("plugins.enable", "Enable")} disabled={!!busy} onChange={(on) => void run(on ? "enabling" : "disabling", () => (on ? client.enable(info.id) : client.disable(info.id)))} />
+            <span style={{ color: "var(--flux-muted)" }}>{info.enabled ? t("plugins.enabled", "Enabled") : t("plugins.disabled", "Disabled")}</span>
+            <Button size="sm" onClick={() => void run("reloading", () => client.reload(info.id))}>{t("plugins.reload", "Reload")}</Button>
+            <Button size="sm" variant="destructive" onClick={() => confirm(`${t("plugins.uninstall", "Uninstall")} ${info.name}?`) && void run("uninstalling", () => client.uninstall(info.id), () => navigate("/plugins"))}>{t("plugins.uninstall", "Uninstall")}</Button>
+            <PluginSlot name="manager.plugin.actions" props={{ plugin: info }} />
+          </div>
+        </div>
+      </div>
+      {info.error && <div className="flux-plugin-error" role="alert">{info.error.phase}: {info.error.message}</div>}
+      {view && <Facts v={view} extra={[["Runtime", info.state]]} />}
+      <p style={{ fontSize: "1.1em" }}>{info.description}</p>
+      {view ? <Body v={view} permissionsSlot={(perm) => <Switch checked={info.permissions.granted.includes(perm as never)} label={perm} onChange={(on) => void (on ? client.grant(info.id, perm as never) : client.revoke(info.id, perm as never))} />} /> : <div className="flux-loading">…</div>}
+      <ConfigForm id={info.id} />
+      <PluginSlot name="manager.plugin.details" props={{ plugin: info }} />
+      <Logs id={info.id} state={info.state} />
+    </div>
+  );
 }
 
-/** Full plugin manager screen. Extensible through the `manager.plugin.actions` / `manager.plugin.details` slots. */
-export function PluginManagerUI(): React.ReactElement {
+/** Detail screen of a plugin listed in a store (route `/plugins/store/:id`). */
+export function StorePluginPage(): React.ReactElement {
+  const t = useT();
+  const { client } = usePluginFramework();
+  const { id = "" } = useParams();
+  const [entry, setEntry] = useState<RegistryEntryLike | undefined>(() => storeCache.find((e) => e.id === id));
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (entry) return;
+    client.search(id).then((r) => setEntry(r.find((e) => e.id === id))).catch((e: Error) => setErr(e.message));
+  }, [client, id, entry]);
+  const install = async () => { if (!entry) return; setBusy(true); try { await (entry.installedVersion ? client.update(entry) : client.install(entry)); navigate("/plugins/" + entry.id); } catch (e) { alert((e as Error).message); } finally { setBusy(false); } };
+  if (!entry) return <div className="flux-pm"><button className="flux-pm-back" onClick={back}><Icon name="back" size={20} />{t("plugins.discover", "Discover")}</button>{err ? <div className="flux-plugin-error">{err}</div> : <div className="flux-loading">…</div>}</div>;
+  const v = fromEntry(entry);
+  const needsUpdate = !!entry.installedVersion && entry.installedVersion !== entry.version;
+  return (
+    <div className="flux-pm" data-testid="store-details">
+      <button className="flux-pm-back" onClick={back} data-testid="plugin-back"><Icon name="back" size={20} />{t("plugins.discover", "Discover")}</button>
+      <div className="flux-pm-hero">
+        <Icon56 url={v.iconUrl} base={v.assetBase} large />
+        <div>
+          <h1>{v.name}</h1>
+          <div className="by">{v.author ?? v.id}{entry.stars ? ` · ★ ${entry.stars}` : ""} · {entry.source}</div>
+          <div className="flux-pm-actions">
+            {entry.installedVersion && !needsUpdate ? <Button variant="primary" onClick={() => navigate("/plugins/" + entry.id)}>{t("plugins.open", "Open")}</Button>
+              : <Button variant="primary" disabled={busy} onClick={() => void install()} data-testid="store-install">{busy ? "…" : needsUpdate ? t("plugins.update", "Update") : t("plugins.get", "Get")}</Button>}
+            {entry.installedVersion && <span style={{ color: "var(--flux-muted)" }}>{t("plugins.installedVersion", "Installed: {v}", { v: entry.installedVersion })}</span>}
+          </div>
+        </div>
+      </div>
+      <Facts v={v} />
+      <p style={{ fontSize: "1.1em" }}>{v.description}</p>
+      <Body v={v} />
+    </div>
+  );
+}
+
+/** The plugin list: Installed · Discover (stores) · Updates. Rows open the detail screens. */
+export function PluginsPage(): React.ReactElement {
+  const t = useT();
   const { client } = usePluginFramework();
   const plugins = usePlugins();
-  const [tab, setTab] = useState<"installed" | "available" | "updates">("installed");
-  const [sel, setSel] = useState<string>();
-  const [avail, setAvail] = useState<RegistryEntryLike[]>([]);
-  const [storeError, setStoreError] = useState("");
-  const [loadingStore, setLoadingStore] = useState(false);
+  const [tab, setTab] = useState<"installed" | "discover" | "updates">("installed");
+  const [q, setQ] = useState("");
+  const [entries, setEntries] = useState<RegistryEntryLike[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
-  const wrap = useCallback(async (label: string, fn: () => Promise<unknown>) => { setBusy(label); try { await fn(); } catch (e) { alert((e as Error).message); } finally { setBusy(""); } }, []);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (tab === "installed") return;
     let live = true;
-    setLoadingStore(true); setStoreError("");
-    (tab === "available" ? client.search() : client.updates())
-      .then((e) => live && setAvail(e))
-      .catch((e: Error) => live && (setAvail([]), setStoreError(e.message)))
-      .finally(() => live && setLoadingStore(false));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      setLoading(true); setError("");
+      (tab === "discover" ? client.search(q || undefined) : client.updates())
+        .then((e) => { if (live) { setEntries(e); if (tab === "discover") storeCache = e; } })
+        .catch((e: Error) => live && (setEntries([]), setError(e.message)))
+        .finally(() => live && setLoading(false));
+    }, tab === "discover" && q ? 350 : 0);
     return () => { live = false; };
-  }, [client, tab]);
-  const selected = plugins.find((p) => p.id === sel);
+  }, [client, tab, q]);
+  const installed = useMemo(() => plugins.filter((p) => !q || `${p.name} ${p.id} ${p.description ?? ""}`.toLowerCase().includes(q.toLowerCase())), [plugins, q]);
+  const act = useCallback(async (e: RegistryEntryLike) => { setBusy(e.id); try { await (e.installedVersion ? client.update(e) : client.install(e)); setEntries((l) => l.map((x) => (x.id === e.id ? { ...x, installedVersion: e.version } : x))); } catch (err) { alert((err as Error).message); } finally { setBusy(""); } }, [client]);
   return (
-    <div className="fluxm"><style>{css}{css2}</style>
-      <h2>Plugins {busy && <span className="fluxm-muted">{busy}…</span>}</h2>
-      <div className="fluxm-tabs">{(["installed", "available", "updates"] as const).map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t[0]!.toUpperCase() + t.slice(1)}</button>)}</div>
-      {tab === "installed" && plugins.map((p) => (
-        <div className="fluxm-row" key={p.id} data-plugin={p.id}>
-          <PluginIconLazy id={p.id} /><div className="fluxm-grow"><strong>{p.name}</strong> <span className="fluxm-muted">v{p.version}</span> {badge(p)}<div className="fluxm-muted">{p.description}</div></div>
-          <PluginSlot name="manager.plugin.actions" props={{ plugin: p }} />
-          <button onClick={() => setSel(p.id)}>Details</button>
-          <button onClick={() => wrap("reloading", () => client.reload(p.id))}>Reload</button>
-          {p.enabled ? <button onClick={() => wrap("disabling", () => client.disable(p.id))}>Disable</button> : <button className="on" onClick={() => wrap("enabling", () => client.enable(p.id))}>Enable</button>}
-          <button className="danger" onClick={() => confirm(`Uninstall ${p.name}?`) && wrap("uninstalling", () => client.uninstall(p.id))}>Uninstall</button>
-        </div>))}
-      {tab !== "installed" && loadingStore && <div className="fluxm-muted">Searching the plugin stores…</div>}
-      {tab !== "installed" && storeError && <div className="fluxm-error fluxm-badge" role="alert" data-testid="store-error">{storeError}</div>}
-      {tab !== "installed" && !loadingStore && !storeError && avail.length === 0 && (
-        <div className="fluxm-muted" data-testid="store-empty">{tab === "updates" ? "Everything is up to date." : "No plugins found. Plugins published with `fluxplugin publish` appear here; you can add your own store in fluxplugin.config.json."}</div>)}
-      {tab !== "installed" && avail.map((e) => (
-        <div className="fluxm-row" key={e.id + e.version} data-store-entry={e.id}>
-          <div className="fluxm-grow">
-            <strong>{e.name}</strong> <span className="fluxm-muted">v{e.version}{e.stars ? ` · ★ ${e.stars}` : ""} · {e.source}</span>
-            <div className="fluxm-muted">{e.description}</div>
-            <div className="fluxm-muted">asks for: {e.permissions.join(", ") || "no permissions"}{e.homepage ? <> · <a href={e.homepage} target="_blank" rel="noopener noreferrer">source</a></> : null}</div>
-          </div>
-          <button className="on" onClick={() => wrap("installing", () => (tab === "updates" ? client.update(e) : client.install(e)))}>{tab === "updates" ? "Update" : "Install"}</button>
-        </div>))}
-      {selected && <Details p={selected} onClose={() => setSel(undefined)} />}
-    </div>);
+    <div className="flux-pm" data-testid="plugins-page">
+      <h1 className="flux-large-title">{t("plugins.title", "Plugins")}</h1>
+      <div className="flux-pm-top">
+        <Segmented<"installed" | "discover" | "updates"> value={tab} onChange={setTab} label="Plugins" options={[{ value: "installed", label: t("plugins.installed", "Installed") }, { value: "discover", label: t("plugins.discover", "Discover") }, { value: "updates", label: t("plugins.updates", "Updates") }]} />
+        <input className="flux-input" style={{ maxWidth: 260 }} placeholder={t("plugins.search", "Search plugins")} value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search plugins" />
+      </div>
+      {tab === "installed" && (
+        <Group>
+          {installed.length === 0 && <Row title={t("plugins.none", "No plugins installed")} />}
+          {installed.map((p) => {
+            const [label, cls] = stateLabel(p);
+            return <div key={p.id} data-plugin={p.id}><PluginRow p={p} label={label} cls={cls} /></div>;
+          })}
+        </Group>
+      )}
+      {tab !== "installed" && loading && <div className="flux-loading">{t("plugins.searching", "Searching the plugin stores…")}</div>}
+      {tab !== "installed" && error && <div className="flux-plugin-error" role="alert" data-testid="store-error">{error}</div>}
+      {tab !== "installed" && !loading && !error && entries.length === 0 && <div className="flux-empty" data-testid="store-empty">{tab === "updates" ? t("plugins.upToDate", "Everything is up to date.") : t("plugins.storeEmpty", "No plugins found in your stores.")}</div>}
+      {tab !== "installed" && entries.length > 0 && (
+        <Group>
+          {entries.map((e) => {
+            const update = !!e.installedVersion && e.installedVersion !== e.version;
+            return (
+              <div key={e.id + e.version} data-store-entry={e.id}>
+                <Row onClick={() => navigate("/plugins/store/" + e.id)} chevron
+                  icon={<Img src={e.iconUrl} base={e.location} alt="" fallback={<Icon name="plug" size={16} />} style={{ width: 28, height: 28 }} />} iconColor={e.iconUrl ? "transparent" : undefined}
+                  title={<>{e.name} <span style={{ color: "var(--flux-muted)", fontWeight: 400 }}>v{e.version}</span></>} subtitle={e.description ?? e.id}
+                  right={e.installedVersion && !update ? <span className="flux-pill ok">{t("plugins.installedTag", "Installed")}</span> : <Button size="sm" variant="primary" disabled={busy === e.id} onClick={() => void act(e)}>{busy === e.id ? "…" : update || tab === "updates" ? t("plugins.update", "Update") : t("plugins.get", "Get")}</Button>} />
+              </div>
+            );
+          })}
+        </Group>
+      )}
+    </div>
+  );
 }
+
+function PluginRow({ p, label, cls }: { p: PluginInfo; label: string; cls: string }): React.ReactElement {
+  const { client } = usePluginFramework();
+  const t = useT();
+  const [url, setUrl] = useState<string>();
+  useEffect(() => { client.details(p.id).then((d) => setUrl(d.iconUrl)).catch(() => undefined); }, [client, p.id, p.version]);
+  return (
+    <Row onClick={() => navigate("/plugins/" + p.id)} chevron data-testid={"row-" + p.id}
+      icon={<Img src={url} alt="" fallback={<Icon name="plug" size={16} />} style={{ width: 28, height: 28 }} />} iconColor={url ? "transparent" : undefined}
+      title={<>{p.name} <span style={{ color: "var(--flux-muted)", fontWeight: 400 }}>v{p.version}</span></>} subtitle={p.description ?? p.id}
+      right={<><span className={"flux-pill " + cls}>{t(`state.${p.state}`, label)}</span><Switch checked={p.enabled} label={p.name} onChange={(on) => void (on ? client.enable(p.id) : client.disable(p.id))} /></>} />
+  );
+}
+
+/** Registers `/plugins`, `/plugins/:id` and `/plugins/store/:id` with their breadcrumbs. */
+export function registerPluginManagerRoutes(framework: RendererFramework): void {
+  const r = framework.manager.routes;
+  r.register({ path: "/plugins", component: PluginsPage, meta: { title: "Plugins", breadcrumb: "Plugins" } }, "host");
+  r.register({ path: "/plugins/:id", component: PluginDetailsPage, meta: { breadcrumb: (p) => p["id"] ?? "" } }, "host");
+  r.register({ path: "/plugins/store/:id", component: StorePluginPage, meta: { breadcrumb: (p) => p["id"] ?? "" } }, "host");
+}
+
+/** Back-compat: the list page. */
+export const PluginManagerUI = PluginsPage;

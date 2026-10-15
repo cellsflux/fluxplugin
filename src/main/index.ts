@@ -8,3 +8,4 @@ export * from "./tar.js";
 export * from "./serve-web.js";
 export * from "./github-registry.js";
 export * from "./stores.js";
+export * from "./assets.js";
