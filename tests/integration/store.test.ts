@@ -124,7 +124,7 @@ describe("publish → search → install (GitHub topic store)", () => {
     await inst.install((await store.search())[0]!);
     // readdir returns "\\" on Windows: compare with "/" everywhere
     const files = ((await fs.readdir(path.join(tmp, "p/com.x.sloppy"), { recursive: true })) as string[]).map((f) => f.split(path.sep).join("/")).sort();
-    expect(files).toEqual(["dist", "dist/main.mjs", "dist/types.d.ts", "plugin.json"]);
+    expect(files).toEqual([".flux-install.json", "dist", "dist/main.mjs", "dist/types.d.ts", "plugin.json"]); // sources/maps pruned; the install record is the only addition
   });
 
   it("explains GitHub's rate limit, refuses non-https hosts, and the default store is the GitHub topic store", async () => {

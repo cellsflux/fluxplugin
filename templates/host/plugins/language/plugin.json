@@ -28,5 +28,12 @@
   ],
   "engines": {
     "fluxplugin": "^1.0.0"
-  }
+  },
+  "isSystem": true,
+  "provides": [
+    "language"
+  ],
+  "requiredPermissions": [
+    "ui"
+  ]
 }

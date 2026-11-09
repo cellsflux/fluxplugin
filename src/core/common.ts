@@ -65,6 +65,18 @@ export class PermissionDeniedError extends FrameworkError {
   }
 }
 
+export class PermissionLockedError extends FrameworkError {
+  constructor(pluginId: string, public readonly permission: string, public readonly reason: string, public readonly blockedBy: string[] = []) {
+    super(`Permission "${permission}" of "${pluginId}" cannot be changed: ${reason}`, "FLUX_PERMISSION_LOCKED", pluginId);
+  }
+}
+
+export class SystemProtectedError extends FrameworkError {
+  constructor(pluginId: string, action: string) {
+    super(`"${pluginId}" is a system plugin: it cannot be ${action}.`, "FLUX_SYSTEM_PROTECTED", pluginId);
+  }
+}
+
 export class LifecycleError extends FrameworkError {
   constructor(pluginId: string, public readonly phase: string, message: string, cause?: unknown) {
     super(`[${pluginId}] ${phase}: ${message}`, "FLUX_LIFECYCLE", pluginId, { cause });

@@ -24,6 +24,28 @@ export type PluginState =
   | "disabled"
   | "error";
 
+/** Optional gates on declarative contributions: skipped when the feature is off or another plugin owns the capability. */
+export interface Gated {
+  feature?: string;
+  capability?: string;
+}
+
+export interface FeatureInfo {
+  id: string;
+  title: string;
+  description?: string;
+  requires: Permission[];
+  enabled: boolean;
+}
+
+export interface CapabilityInfo {
+  capability: string;
+  owner: string | undefined;
+  /** Enabled plugins offering it; more than one means the user chooses. */
+  providers: { id: string; name: string; isSystem: boolean }[];
+  conflict: boolean;
+}
+
 export type MenuInput = Omit<MenuItemDefinition, "id" | "location"> & { id: string; location: MenuItemDefinition["location"] };
 
 export interface PluginContext<Cfg extends Record<string, any> = Record<string, any>> {
@@ -117,19 +139,19 @@ export interface PluginDefinition<Cfg extends Record<string, any> = Record<strin
   config?: ConfigDefinition<Cfg>;
 
   /* ---- declarative contributions (registered automatically on activation) ---- */
-  routes?: RouteDefinition<any>[];
+  routes?: (RouteDefinition<any> & Gated)[];
   layouts?: Record<string, unknown>;
-  commands?: CommandDefinition<any[], any>[];
-  menus?: MenuInput[];
-  hooks?: { name: string; handler: (...args: any[]) => any; priority?: number }[];
+  commands?: (CommandDefinition<any[], any> & Gated)[];
+  menus?: (MenuInput & Gated)[];
+  hooks?: ({ name: string; handler: (...args: any[]) => any; priority?: number } & Gated)[];
   /** Service name → implementation, or a factory receiving the context. */
   services?: Record<string, unknown> | ((ctx: Ctx<Cfg>) => Record<string, unknown>);
-  ipc?: IpcDefinition<any, any>[];
-  events?: { name: string; handler: EventListener<any>; priority?: number; once?: boolean }[];
+  ipc?: (IpcDefinition<any, any> & Gated)[];
+  events?: ({ name: string; handler: EventListener<any>; priority?: number; once?: boolean } & Gated)[];
   /** Slot contributions. */
-  components?: SlotContribution<any>[];
+  components?: (SlotContribution<any> & Gated)[];
   /** Extension point contributions. */
-  extensions?: { point: string; contribution: Record<string, unknown>; priority?: number }[];
+  extensions?: ({ point: string; contribution: Record<string, unknown>; priority?: number } & Gated)[];
   styles?: (string | StyleInput)[];
   /** Renderer-visible APIs: `{ analytics: { getStats: "analytics.getStats" } }`. */
   preload?: Record<string, Record<string, PreloadMemberInput>>;
@@ -178,7 +200,13 @@ export interface PluginInfo {
   state: PluginState;
   enabled: boolean;
   runtime: Runtime;
-  permissions: { declared: Permission[]; granted: Permission[]; denied: Permission[] };
+  permissions: { declared: Permission[]; granted: Permission[]; denied: Permission[]; /** why a permission cannot be changed right now */ locks?: Record<string, import("./permissions.js").PermissionLock> };
+  /** True only for plugins the host trusts as system plugins: they cannot be disabled or uninstalled. */
+  isSystem?: boolean;
+  provides?: string[];
+  conflicts?: string[];
+  pricing?: PluginManifest["pricing"];
+  features?: FeatureInfo[];
   dependencies: Record<string, string>;
   dependents: string[];
   activationEvents: string[];

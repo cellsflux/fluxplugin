@@ -8,6 +8,8 @@ import { buildPlugin, linkPluginToHost } from "./build.js";
 import { buildHost, ensureElectron, isHostProject, startApp } from "./host.js";
 import { hostFiles } from "./host-templates.js";
 import { packagePlugin } from "./package.js";
+import { generateNotes } from "./release-notes.js";
+import { publishProduction } from "./release.js";
 import { publishPlugin } from "./publish.js";
 import { storeAdd, storeBuild, storeInit } from "./store.js";
 import { distApp, exportWebsite } from "./dist.js";
@@ -26,7 +28,9 @@ const HELP = `fluxplugin <command>
   plugin new <name> [-t basic|dashboard|backend] [--tailwindcss] [--standalone]   scaffold a plugin (its own project when outside an app)
   dev --host <app>                (in a plugin project) rebuild on save and sync into a host app that hot-reloads it
   validate [dir]                  check a plugin manifest, entries and integrity
+  notes [dir]                     create/refresh updates/<version>.md (release notes) from the detected changes
   publish [dir] [--repo o/r] [--dry-run]   publish a plugin to the store (GitHub release + topic)
+  publish --production [--bump patch|minor|major|none] [--github o/r] [--out dir] [--base-url url] [--update-key k] [--min-host v]   publish an APPLICATION update (new version, notes, only changed files)
   search [query]                  search the configured stores
   install <id[@version]|dir|.tgz> install a plugin from a store, a folder or a package
   store init <dir>                create your own store (index.json) — host it anywhere
@@ -46,7 +50,7 @@ export async function readManifest(root: string) {
 export async function run(argv: string[]): Promise<number> {
   const { values: f, positionals: pos } = parseArgs({
     args: argv, allowPositionals: true,
-    options: { template: { type: "string", short: "t" }, out: { type: "string" }, dir: { type: "string" }, data: { type: "string" }, "sign-key": { type: "string" }, help: { type: "boolean", short: "h" }, web: { type: "boolean" }, port: { type: "string" }, name: { type: "string" }, "no-sample": { type: "boolean" }, tailwindcss: { type: "boolean" }, repo: { type: "string" }, token: { type: "string" }, "dry-run": { type: "boolean" }, "base-url": { type: "string" }, all: { type: "boolean" }, win: { type: "boolean" }, mac: { type: "boolean" }, linux: { type: "boolean" }, unpacked: { type: "boolean" }, store: { type: "string" }, host: { type: "string" }, standalone: { type: "boolean" } },
+    options: { template: { type: "string", short: "t" }, out: { type: "string" }, dir: { type: "string" }, data: { type: "string" }, "sign-key": { type: "string" }, help: { type: "boolean", short: "h" }, web: { type: "boolean" }, port: { type: "string" }, name: { type: "string" }, "no-sample": { type: "boolean" }, tailwindcss: { type: "boolean" }, repo: { type: "string" }, token: { type: "string" }, "dry-run": { type: "boolean" }, "base-url": { type: "string" }, production: { type: "boolean" }, "update-key": { type: "string" }, "min-host": { type: "string" }, bump: { type: "string" }, github: { type: "string" }, all: { type: "boolean" }, win: { type: "boolean" }, mac: { type: "boolean" }, linux: { type: "boolean" }, unpacked: { type: "boolean" }, store: { type: "string" }, host: { type: "string" }, standalone: { type: "boolean" } },
   });
   let [cmd, arg] = pos;
   if (cmd === "store") { cmd = "store:" + (pos[1] ?? ""); arg = pos[2]; }
@@ -132,6 +136,11 @@ export async function run(argv: string[]): Promise<number> {
         await packagePlugin(root, { out: f.out, signKey: f["sign-key"] });
         return 0;
       }
+      case "notes": {
+        const r = await generateNotes(root);
+        log(`✔ ${path.relative(process.cwd(), r.file) || r.file} ${r.created ? "created" : "updated (your own text is kept)"}`);
+        return 0;
+      }
       case "dist": return await distApp(process.cwd(), { win: f.win, mac: f.mac, linux: f.linux, dir: f.unpacked });
       case "export": await exportWebsite(process.cwd(), f.out ?? "website"); return 0;
       case "store:build": {
@@ -140,6 +149,10 @@ export async function run(argv: string[]): Promise<number> {
         return 0;
       }
       case "publish":
+        if (f.production) {
+          await publishProduction(process.cwd(), { bump: (f.bump as "patch" | "minor" | "major" | "none") ?? "patch", out: f.out, baseUrl: f["base-url"], github: f.github, signKey: f["update-key"], minHost: f["min-host"], token: f.token, dryRun: f["dry-run"] });
+          return 0;
+        }
         await publishPlugin(root, { repo: f.repo, token: f.token, signKey: f["sign-key"], dryRun: f["dry-run"] });
         return 0;
       case "search": {

@@ -27,12 +27,16 @@ function hostBuilds(cwd: string, outDir: string, dev: boolean): BuildOptions[] {
   const main = pick(cwd, "src/app/main/index.ts", "src/main.ts");
   const preload = pick(cwd, "src/app/preload/index.ts", "src/preload.ts");
   const web = pick(cwd, "src/app/main/web.ts", "src/web.ts");
-  return [
+  const list: BuildOptions[] = [
     { ...common, entryPoints: [renderer], outfile: path.join(outDir, "renderer.js"), platform: "browser", format: "esm", target: "chrome120" },
     { ...common, entryPoints: [main], outfile: path.join(outDir, "main.cjs"), platform: "node", format: "cjs", target: "node20", external: ["electron"] },
     { ...common, entryPoints: [preload], outfile: path.join(outDir, "preload.cjs"), platform: "node", format: "cjs", target: "node20", external: ["electron"] },
     { ...common, entryPoints: [web], outfile: path.join(outDir, "web.mjs"), platform: "node", format: "esm", target: "node20", external: ["electron"], banner: nodeBanner },
   ];
+  const boot = pick(cwd, "src/app/main/boot.ts");
+  // The package's "main": picks the newest valid downloaded payload (progressive updates) or the bundled one.
+  if (existsSync(boot)) list.push({ ...common, entryPoints: [boot], outfile: path.join(outDir, "boot.cjs"), platform: "node", format: "cjs", target: "node20", external: ["electron"] });
+  return list;
 }
 
 async function pluginDirs(cwd: string, pluginsDir: string): Promise<string[]> {

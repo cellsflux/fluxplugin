@@ -28,7 +28,7 @@ function LanguageSection() {
 export default definePlugin({
   extensions: [
     { point: "settings", contribution: { sections: [{ id: "language", title: "Language", icon: "language", order: 20, component: LanguageSection }] } },
-    { point: "i18n", contribution: { languages } },
-    ...Object.entries(messages).map(([locale, m]) => ({ point: "i18n", contribution: { messages: [{ locale, messages: m }] } })),
+    { point: "i18n", capability: "language", contribution: { languages } },
+    ...Object.entries(messages).map(([locale, m]) => ({ point: "i18n", capability: "language", contribution: { messages: [{ locale, messages: m }] } })),
   ],
 });

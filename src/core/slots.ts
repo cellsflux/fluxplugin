@@ -149,6 +149,14 @@ export class ExtensionPointRegistry extends Registry<PointContribution & { point
     return this.add(`${point}::${owner ?? "anon"}::${this.counter++}`, { point, priority, value }, owner);
   }
 
+  /** Same as `items`, with the plugin that contributed each one (prefix translations, hand files to the right plugin…). */
+  itemsWithOwner<T = unknown>(point: string, key: string): { owner: string; value: T }[] {
+    return [...this.table.values()]
+      .filter((e) => e.item.point === point && key in e.item.value)
+      .sort((a, b) => b.item.priority - a.item.priority)
+      .flatMap((e) => ((Array.isArray(e.item.value[key]) ? e.item.value[key] : [e.item.value[key]]) as T[]).map((value) => ({ owner: e.owner ?? "host", value })));
+  }
+
   /** Merged, priority-ordered items contributed under `key` of `point`. */
   items<T = unknown>(point: string, key: string): T[] {
     return this.list()

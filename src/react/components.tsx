@@ -129,6 +129,13 @@ export function useExtensionItems<T = unknown>(point: string, key: string): T[] 
   return useMemo(() => fw.manager.extensionPoints.items<T>(point, key), [fw, point, key, version]);
 }
 
+/** Like `useExtensionItems` but each item knows which plugin contributed it. */
+export function useExtensionItemsWithOwner<T = unknown>(point: string, key: string): { owner: string; value: T }[] {
+  const fw = usePluginFramework();
+  const version = useRegistryVersion(fw.manager.extensionPoints.subscribe, () => fw.manager.extensionPoints.version);
+  return useMemo(() => fw.manager.extensionPoints.itemsWithOwner<T>(point, key), [fw, point, key, version]);
+}
+
 /* ------------------------------------------------------------------- hooks */
 
 export function usePlugin(id: string): PluginInfo | undefined {

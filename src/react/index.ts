@@ -14,3 +14,7 @@ export * from "./media.js";
 export * from "./i18n.js";
 export * from "./sidebar.js";
 export * from "./settings.js";
+export * from "./alerts.js";
+export * from "./busy.js";
+export * from "./desktop.js";
+export * from "./update.js";

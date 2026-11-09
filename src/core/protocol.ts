@@ -11,6 +11,8 @@ export const CHANNELS = {
 } as const;
 
 export interface RendererPluginDescriptor {
+  /** Decided by the host in the main process; the renderer cannot change it. */
+  isSystem?: boolean;
   id: string;
   manifest: PluginManifest;
   enabled: boolean;
@@ -28,6 +30,8 @@ export interface Bootstrap {
   preload: Record<string, PreloadApiSpec>;
   /** Monotonic counter bumped whenever the plugin set / state changes. */
   revision: number;
+  /** Feature switches and capability owners chosen by the user (same decisions in both processes). */
+  policy?: import("./manager.js").PolicyState;
 }
 
 export interface InvokeRequest {
@@ -72,6 +76,15 @@ export const MGMT = {
   logs: "flux.plugins.logs",
   diagnostics: "flux.plugins.diagnostics",
   details: "flux.plugins.details",
+  catalog: "flux.plugins.catalog",
+  readme: "flux.plugins.readme",
+  plan: "flux.plugins.plan",
+  installPlan: "flux.plugins.installPlan",
+  analyze: "flux.plugins.analyze",
+  feature: "flux.plugins.feature",
+  capability: "flux.plugins.capability",
+  capabilities: "flux.plugins.capabilities",
+  license: "flux.plugins.license",
   changed: "flux.plugins.changed",
 } as const;
 
@@ -103,6 +116,31 @@ export interface RegistryEntryLike {
   installedVersion?: string;
   folder?: boolean;
   files?: string[];
+  hashes?: Record<string, string>;
+  /** Plugin ids and version ranges this plugin needs. */
+  dependencies?: Record<string, string>;
+  provides?: string[];
+  conflicts?: string[];
+  pricing?: Pricing;
+  updatedAt?: string;
+  /** Release notes (updates/<version>.md), newest first. */
+  updates?: { version: string; notes: string }[];
+  /** Added by the catalog: every known version, every store listing it, contradictions between stores. */
+  versions?: string[];
+  sources?: string[];
+  conflict?: string[];
+  /** True when the catalog has a newer version than the installed one. */
+  updateAvailable?: boolean;
+}
+
+export interface Pricing {
+  model: "free" | "paid" | "subscription";
+  amount?: number;
+  currency?: string;
+  purchaseUrl?: string;
+  trialDays?: number;
+  /** Public key (base64 SPKI) that verifies license tokens for this plugin. */
+  publicKey?: string;
 }
 
 /** Everything a UI needs to render a plugin "store page": icon, banner, screenshots, video, long description. */
@@ -122,6 +160,10 @@ export interface PluginDetails {
   bannerUrl?: string;
   screenshotUrls: string[];
   video?: import("./manifest.js").VideoInfo;
+  isSystem?: boolean;
+  pricing?: Pricing;
+  /** Release notes of the installed versions (updates/*.md), newest first. */
+  releaseNotes?: { version: string; notes: string }[];
   /** Base URL of the plugin's files (to resolve relative images/videos). */
   assetBase?: string;
   /** Markdown source of the long description (rendered by the UI without raw HTML). */

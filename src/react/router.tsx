@@ -10,6 +10,8 @@ import React, {
   type ReactNode,
 } from "react";
 import { normalizePath, type Breadcrumb, type GuardResult, type RouteMatch, type RouteParams } from "../core/index.js";
+import { alertApi } from "./alerts.js";
+import { busy } from "./busy.js";
 import { PluginBoundary, usePluginFramework } from "./components.js";
 
 /* ---------------------------------------------------------------- location */
@@ -20,7 +22,28 @@ function currentPath(): string {
   return normalizePath(h || "/");
 }
 const listeners = new Set<() => void>();
-if (typeof window !== "undefined") window.addEventListener("hashchange", () => listeners.forEach((l) => l()));
+let committedHash = typeof window !== "undefined" ? window.location.hash : "";
+let bypass = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", () => {
+    const target = window.location.hash;
+    const dirty = busy.list().filter((i) => i.kind === "dirty");
+    if (bypass || !dirty.length) {
+      committedHash = target;
+      return listeners.forEach((l) => l());
+    }
+    // Leaving would lose unsaved edits: put the old location back, ask, and only then really navigate.
+    history.replaceState(null, "", committedHash || "#/");
+    void alertApi
+      .confirm({ title: "Discard your changes?", message: `${dirty.map((d) => d.label).join(", ")} will be lost if you leave this screen.`, confirmLabel: "Discard changes", cancelLabel: "Keep editing", destructive: true })
+      .then((ok) => {
+        if (!ok) return;
+        bypass = true;
+        window.location.hash = target;
+        setTimeout(() => (bypass = false), 0);
+      });
+  });
+}
 const subscribeLocation = (l: () => void) => (listeners.add(l), () => void listeners.delete(l));
 
 export function navigate(to: string, opts: { replace?: boolean } = {}): void {
@@ -29,7 +52,7 @@ export function navigate(to: string, opts: { replace?: boolean } = {}): void {
   else window.location.hash = target;
   // Notify right away instead of waiting for the async `hashchange` event (duplicates are harmless:
   // subscribers compare the resulting path).
-  listeners.forEach((l) => l());
+  if (!busy.hasDirty()) listeners.forEach((l) => l()); // with unsaved edits the guard in the hashchange handler decides
 }
 
 export function useLocation(): string {

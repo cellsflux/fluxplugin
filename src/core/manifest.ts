@@ -25,6 +25,8 @@ export const BUILTIN_PERMISSIONS = [
   "styles",
   "clipboard",
   "shell",
+  "camera",
+  "shortcuts",
 ] as const;
 export type BuiltinPermission = (typeof BUILTIN_PERMISSIONS)[number];
 export type Permission = BuiltinPermission | `x.${string}`;
@@ -56,6 +58,8 @@ export const manifestSchema = s.object({
   banner: s.string().optional(),
   /** Screenshots shown in a gallery (paths inside the plugin). */
   screenshots: s.array(s.string()).default([]),
+  /** Language of README.md (BCP-47, e.g. "en"). Used to decide whether an automatic translation is needed. */
+  language: s.string().optional(),
   /** Detailed description as Markdown (default: ./README.md). Rendered safely: no raw HTML. */
   readme: s.string().optional(),
   /** Explanation video (https URL; YouTube and Vimeo are embedded, other hosts become a link). */
@@ -102,6 +106,39 @@ export const manifestSchema = s.object({
       configuration: s.unknown().optional(),
     })
     .default({}),
+  /**
+   * Claim of being a system plugin. **Ignored unless the host trusts it** (allow-list or trusted signing key, see `MainFramework`):
+   * a plugin downloaded from a store can never promote itself by editing its manifest.
+   */
+  isSystem: s.boolean().default(false),
+  /** Permissions the plugin cannot work without: they cannot be revoked (disable the plugin instead). */
+  requiredPermissions: s.array(permissionSchema).default([]),
+  /** Independently switchable features. A permission used by an enabled feature cannot be revoked. */
+  features: s
+    .array(
+      s.object({
+        id: s.string({ pattern: /^[a-zA-Z0-9][\w.-]*$/, max: 64 }),
+        title: s.string({ min: 1 }),
+        description: s.string().optional(),
+        requires: s.array(permissionSchema).default([]),
+        default: s.boolean().default(true),
+      }),
+    )
+    .default([]),
+  /** Capabilities offered ("language", "theme"…). When several enabled plugins provide the same one, exactly one owns it. */
+  provides: s.array(s.string({ pattern: /^[a-z0-9][\w.-]*$/ })).default([]),
+  /** Plugin ids that cannot run together with this one. */
+  conflicts: s.array(s.string()).default([]),
+  pricing: s
+    .object({
+      model: s.enum(["free", "paid", "subscription"] as const),
+      amount: s.number({ min: 0 }).optional(),
+      currency: s.string({ pattern: /^[A-Z]{3}$/ }).optional(),
+      purchaseUrl: s.string({ pattern: /^https:\/\/\S+$/ }).optional(),
+      trialDays: s.number({ min: 0, int: true }).optional(),
+      publicKey: s.string().optional(),
+    })
+    .optional(),
   /** Optional integrity hash (sha256-<hex>) of the main bundle. Verified before load when present. */
   integrity: s.record(s.string({ pattern: /^sha256-[0-9a-f]{64}$/ })).optional(),
   signature: s.object({ algorithm: s.literal("ed25519"), publicKey: s.string(), value: s.string() }).optional(),

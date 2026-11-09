@@ -20,7 +20,7 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
         version: "0.1.0",
         private: true,
         type: "module",
-        main: "dist/main.cjs",
+        main: "dist/boot.cjs",
         description: `${v.name} — built with fluxplugin`,
         author: "Your name",
         scripts: {
@@ -31,6 +31,7 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
           dist: "fluxplugin dist",
           "export:web": "fluxplugin export",
           "plugins:package": "fluxplugin package --all",
+          release: "fluxplugin publish --production",
           "plugin:new": "fluxplugin plugin new",
           typecheck: "tsc --noEmit",
         },
@@ -44,7 +45,11 @@ export function hostFiles(v: HostVars, withSample = true): Record<string, string
       2,
     ),
     // "stores" is used by the CLI (fluxplugin search/install) AND by your app (Plugins → Available). Add your own store here.
-    "fluxplugin.config.json": JSON.stringify({ pluginsDir: "plugins", outDir: "dist", stores: v.stores ?? [{ type: "github", topic: "fluxplugin-plugin" }] }, null, 2),
+    "fluxplugin.config.json": JSON.stringify({ pluginsDir: "plugins", outDir: "dist", stores: v.stores ?? [{ type: "github", topic: "fluxplugin-plugin" }],
+        // Application updates: only changed files are downloaded. Publish with `npm run release`, then point "source" at your server or GitHub repo.
+        updates: { enabled: false, source: { type: "github", repo: "owner/repo" }, intervalHours: 6, autoDownload: false, publicKey: "" },
+        // Automatic translation of plugin READMEs written in another language than the interface (off: text is sent to the service).
+        translate: { enabled: false, provider: "libretranslate", url: "https://libretranslate.com", apiKeyEnv: "LIBRETRANSLATE_API_KEY" } }, null, 2),
     "tsconfig.json": JSON.stringify(
       { compilerOptions: { target: "ES2022", module: "ESNext", moduleResolution: "Bundler", jsx: "react-jsx", strict: true, noEmit: true, skipLibCheck: true, resolveJsonModule: true, lib: ["ES2022", "DOM", "DOM.Iterable"], types: ["node"] }, include: ["src"] },
       null,

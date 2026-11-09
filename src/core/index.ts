@@ -17,3 +17,6 @@ export * from "./manager.js";
 export * from "./protocol.js";
 export * from "./api.js";
 export * from "./notifications.js";
+export * from "./catalog.js";
+export * from "./desktop.js";
+export * from "./update.js";

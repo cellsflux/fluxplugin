@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, type ReactNode } from "react";
 import type { FluxBridge } from "fluxplugin";
-import { I18nProvider, PluginProvider, SidebarProvider, StyleHost, ThemeProvider, ToastHost, baseCss, type RendererFramework } from "fluxplugin/react";
+import { AlertProvider, FileOpenHost, I18nProvider, PluginProvider, QuitGuard, SidebarProvider, StyleHost, ThemeProvider, ToastHost, UpdateHost, baseCss, isUpdateDownloading, type RendererFramework } from "fluxplugin/react";
 import { setTitleBarOverlay } from "../services/window";
 
 const BridgeContext = createContext<FluxBridge | null>(null);
@@ -23,8 +23,13 @@ export function AppProviders({ framework, bridge, children }: { framework: Rende
         <I18nProvider>
           <ThemeProvider onResolved={onResolved}>
             <SidebarProvider>
-              {children}
-              <ToastHost />
+              <AlertProvider>
+                {children}
+                <ToastHost />
+                <FileOpenHost />
+                <QuitGuard updateDownloading={isUpdateDownloading} />
+                <UpdateHost />
+              </AlertProvider>
             </SidebarProvider>
           </ThemeProvider>
         </I18nProvider>

@@ -69,10 +69,10 @@ plugins/      loaded at startup
 ```
 
 ## Status — read this
-* **Verified:** strict typecheck; ~170 automated tests; `publint` clean and `are-the-types-wrong` green (ESM/bundler); the packed tarball installed into a generated
-  app (with Tailwind) → typecheck → build (host + 3 plugins) → run in a real browser: collapsing sidebar, language switch via the Language plugin, font/size/accent/theme
-  via the Appearance plugin, plugin details as a separate screen with navigation, Markdown tables. Earlier rounds ran the app in real Electron 44 (Linux, Xvfb).
-* **Not re-run in this round:** Electron after the latest UI changes, `fluxplugin dist` (electron-builder installers) and `fluxplugin export` end to end, Windows/macOS,
-  playback of YouTube/Dailymotion/Loom (embed URLs and sandboxed iframes are asserted, not played), and `fluxplugin publish` against real github.com.
-* **Not published** on npm — see `docs/RELEASE.md`. **Security:** plugin `main` code is not sandboxed (see `docs/SECURITY.md`).
-* **Not done:** per-plugin process isolation, hosted marketplace service, native (OS) notifications, translations of permission titles (English fallback).
+* **Latest round (typechecked, unit/integration-tested, generated app builds):** FluxAPI (notifications, native file dialogs, read/write with per-plugin file capabilities, clipboard, links, camera, app info),
+  files opened by the OS routed to plugin handlers (route / modal / import, "Open with…"), in-app alerts, unsaved-changes and quit guards, plugin translations with automatic prefix, READMEs translated by a configurable engine,
+  progressive application updates (`publish --production`, delta download, progress card, background download, rollback, version history). See `docs/DESKTOP-API.md` and `docs/UPDATES.md`.
+* **Tests:** 228 automated tests (incl. FluxAPI permissions and file capabilities, update delta/signature/minHost/rollback, README translation, alerts, unsaved-changes and quit guards, file handlers, plugin translation prefixes, update card). Also run for real: generated app → `publish --production` twice (second release = 1 new file out of 20) → signed delta update → boot; real browser: Updates settings and the React alert instead of a browser dialog. **Verified earlier (190 automated tests + real browser):** plugin management — system plugins, locked permissions, features, capabilities, update detection, dependency plans with transactions, de-duplicated paginated catalog, free/paid licenses.
+* **Not verified:** the new features in real Electron (open-with, camera, quit guard, update + restart + rollback), Windows/macOS, `publish --production` against real GitHub, Google/LibreTranslate calls.
+* **Also in:** tray, global shortcuts and printing in FluxAPI; `--min-host` rules and ed25519-signed update manifests. **Not done:** OS code signing / notarization of installers, power/idle and screen capture APIs.
+* **Security:** plugin `main` code is not sandboxed (see `docs/SECURITY.md`). **Not published** on npm.

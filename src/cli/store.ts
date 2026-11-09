@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { validateManifest } from "../core/index.js";
+import { readNotes } from "./release-notes.js";
 import { copyPluginRuntime, readTarGz, type StoreIndex } from "../main/index.js";
 
 const INDEX = "index.json";
@@ -93,6 +94,7 @@ export async function storeBuild(dir: string, opts: { out?: string; pluginsDir?:
         screenshots: (m.screenshots ?? []).map((s) => relFolder + rel(s)),
         video: m.video?.startsWith("./") ? relFolder + rel(m.video) : m.video,
         categories: m.categories, keywords: m.keywords, links: m.links, readme,
+        dependencies: { ...m.dependencies, ...m.peerDependencies }, provides: m.provides, conflicts: m.conflicts, pricing: m.pricing, updates: await readNotes(folder),
       });
       log(`  ${m.id}@${m.version}  (${files.length} files)`);
     }

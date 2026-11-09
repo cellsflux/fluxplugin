@@ -1,6 +1,7 @@
 import {
   DisposableStore,
   FrameworkError,
+  SystemProtectedError,
   LifecycleError,
   LogStore,
   type Logger,
@@ -14,8 +15,8 @@ import { EventBus } from "./events.js";
 import { HookSystem } from "./hooks.js";
 import { IpcRegistry, PreloadRegistry } from "./ipc.js";
 import { FRAMEWORK_VERSION, validateManifest, type Permission, type PluginManifest } from "./manifest.js";
-import { PermissionManager } from "./permissions.js";
-import type { PluginContext, PluginDefinition, PluginInfo, PluginState, Runtime } from "./plugin.js";
+import { PermissionManager, permissionInfo, type PermissionLock } from "./permissions.js";
+import type { CapabilityInfo, FeatureInfo, Gated, PluginContext, PluginDefinition, PluginInfo, PluginState, Runtime } from "./plugin.js";
 import { CommandRegistry, MenuRegistry, ServiceRegistry } from "./registry.js";
 import { RouteRegistry, normalizePath } from "./routes.js";
 import { s } from "./schema.js";
@@ -26,6 +27,8 @@ import { NotificationCenter } from "./notifications.js";
 import { matchesPattern } from "./events.js";
 
 export interface PluginSource {
+  /** Set by trusted host code only. */
+  system?: boolean;
   /** Raw manifest (validated on registration). */
   manifest: unknown;
   /** Absolute plugin directory (main process). */
@@ -49,7 +52,22 @@ export interface HostApiProvider<T = unknown> {
   permission?: Permission;
 }
 
+/** User choices that survive restarts: which features are on and who owns each capability. */
+export interface PolicyState {
+  features: Record<string, Record<string, boolean>>;
+  capabilities: Record<string, string>;
+}
+export interface PolicyStore {
+  load(): Promise<PolicyState>;
+  save(s: PolicyState): Promise<void>;
+}
+
 export interface PluginManagerOptions {
+  /** Decides which plugins are trusted system plugins. A manifest's own `isSystem` is only a claim and is ignored on its own. */
+  isSystemPlugin?: (manifest: PluginManifest, source: PluginSource) => boolean;
+  policyStore?: PolicyStore;
+  /** Returns a reason to refuse activation (missing license…), or undefined to allow it. */
+  activationGuard?: (manifest: PluginManifest) => string | undefined;
   runtime: Runtime;
   storage?: StorageBackend;
   permissions?: PermissionManager;
@@ -85,6 +103,8 @@ interface PluginRecord {
   error?: { message: string; phase: string; time: number };
   warnings: string[];
   inflight?: Promise<void>;
+  /** Trusted system plugin (decided by the host, never by the manifest alone). */
+  system?: boolean;
 }
 
 const DEFAULT_TIMEOUTS: Record<Phase, number> = { load: 15_000, initialize: 10_000, activate: 15_000, ready: 10_000, deactivate: 10_000, unload: 10_000 };
@@ -125,6 +145,7 @@ export class PluginManager {
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...opts.timeouts };
     this.events = new EventBus((e, name, pattern) => this.log.error(`event listener for "${pattern}" failed on "${name}": ${errorMessage(e)}`));
     this.hooks = new HookSystem((e, name, owner) => this.logs.logger(owner ?? "core").error(`hook "${name}" failed: ${errorMessage(e)}`));
+    this.permissions.setLockCheck((id, p) => this.lockOf(id, p));
     this.wireLazyActivation();
     // Keep permission changes visible to UIs.
     this.permissions.onChange(() => this.changed());
@@ -167,6 +188,31 @@ export class PluginManager {
   async init(): Promise<void> {
     const disabled = (await this.opts.stateStore?.load()) ?? [];
     this.persistedDisabled = new Set(disabled);
+    const pol = await this.opts.policyStore?.load();
+    this.policy = { features: pol?.features ?? {}, capabilities: pol?.capabilities ?? {} };
+  }
+  private policy: PolicyState = { features: {}, capabilities: {} };
+
+  getPolicy(): PolicyState {
+    return { features: structuredClone(this.policy.features), capabilities: { ...this.policy.capabilities } };
+  }
+
+  /**
+   * Applies a policy decided elsewhere (the renderer receives the main process's choices) without persisting it, and reloads the
+   * plugins whose gated contributions may have changed.
+   */
+  async applyPolicy(p: PolicyState | undefined): Promise<void> {
+    if (!p || JSON.stringify(p) === JSON.stringify(this.policy)) return;
+    this.policy = { features: p.features ?? {}, capabilities: p.capabilities ?? {} };
+    for (const r of [...this.records.values()]) if (r.state === "ready" && ((r.manifest.features?.length ?? 0) > 0 || (r.manifest.provides?.length ?? 0) > 0)) await this.reload(r.id).catch(() => undefined);
+    this.changed();
+  }
+  private async savePolicy(): Promise<void> {
+    try {
+      await this.opts.policyStore?.save(this.policy);
+    } catch (e) {
+      this.log.error(`could not persist plugin policy: ${errorMessage(e)}`);
+    }
   }
   private persistedDisabled = new Set<string>();
 
@@ -200,7 +246,12 @@ export class PluginManager {
         categories: [],
         keywords: [],
         links: {},
-      } as PluginManifest);
+        isSystem: false,
+        requiredPermissions: [],
+        features: [],
+        provides: [],
+        conflicts: [],
+      } as unknown as PluginManifest);
     const rec: PluginRecord = {
       id,
       manifest,
@@ -213,11 +264,19 @@ export class PluginManager {
       crashes: [],
       warnings: v.warnings,
     };
+    rec.system = v.ok && (source.system === true || (this.opts.isSystemPlugin?.(manifest, source) ?? false));
+    if (v.ok && manifest.isSystem && !rec.system) {
+      rec.warnings = [...rec.warnings, "claims to be a system plugin but the host does not trust it: treated as an ordinary plugin"];
+      this.logs.logger(id).warn("isSystem claim ignored (not trusted by the host)");
+    }
     if (!v.ok) {
       rec.error = { message: v.issues.map((i) => `${i.path || "<root>"}: ${i.message}`).join("; "), phase: "validate", time: Date.now() };
       this.logs.logger(id).error(`manifest validation failed: ${rec.error.message}`);
     } else {
       this.permissions.declare(id, manifest.permissions);
+      // Permissions a system plugin cannot work without are always on, whatever was persisted before.
+      if (rec.system) for (const perm of manifest.requiredPermissions?.length ? manifest.requiredPermissions : manifest.permissions) this.permissions.forceGrant(id, perm);
+      if (rec.system) rec.enabled = true;
       if (!rec.enabled) rec.state = "disabled";
     }
     this.records.set(id, rec);
@@ -264,7 +323,12 @@ export class PluginManager {
       state: rec.state,
       enabled: rec.enabled,
       runtime: this.runtime,
-      permissions: this.permissions.snapshot(id),
+      permissions: { ...this.permissions.snapshot(id), locks: this.locksOf(id) },
+      isSystem: !!rec.system,
+      provides: m.provides ?? [],
+      conflicts: m.conflicts ?? [],
+      pricing: m.pricing,
+      features: this.featuresOf(id),
       dependencies: { ...m.dependencies, ...m.peerDependencies, ...m.optionalDependencies },
       dependents: dependentsOf(graph, id),
       activationEvents: m.activationEvents ?? [],
@@ -348,6 +412,10 @@ export class PluginManager {
     const rec = this.mustGet(id);
     if (!rec.enabled) throw new LifecycleError(id, "activate", "plugin is disabled");
     if (rec.state === "error" && rec.error?.phase === "validate") throw new LifecycleError(id, "validate", rec.error.message);
+    const refused = this.opts.activationGuard?.(rec.manifest);
+    if (refused) throw new LifecycleError(id, "activate", refused);
+    const clash = [...this.records.values()].find((o) => o.id !== id && o.enabled && (o.state === "ready" || o.state === "activated") && ((rec.manifest.conflicts ?? []).includes(o.id) || (o.manifest.conflicts ?? []).includes(id)));
+    if (clash) throw new LifecycleError(id, "activate", `it conflicts with "${clash.id}", which is active`);
     const graph = this.graph();
     if (graph.blocked.has(id)) {
       const reasons = graph.issues.filter((i) => i.plugin === id || (i.type === "cycle" && i.path.includes(id))).map(describeIssue);
@@ -544,6 +612,9 @@ export class PluginManager {
 
   async disable(id: string): Promise<void> {
     const rec = this.mustGet(id);
+    if (rec.system) throw new SystemProtectedError(id, "disabled");
+    const sys = dependentsOf(this.graph(), id).map((d) => this.records.get(d)).find((d) => d?.system && d.enabled);
+    if (sys) throw new FrameworkError(`"${id}" is required by the system plugin "${sys.id}" and cannot be disabled.`, "FLUX_SYSTEM_PROTECTED", id);
     await this.deactivate(id);
     await this.unload(id);
     rec.enabled = false;
@@ -684,24 +755,121 @@ export class PluginManager {
 
   /* ------------------------------------------------- declarative contributions */
 
+  /* ---------------------------------------------- protection, features, capabilities */
+
+  /** Why `permission` cannot be revoked right now (system, required, used by an enabled feature, needed by another permission). */
+  lockOf(id: string, permission: Permission): PermissionLock | undefined {
+    const rec = this.records.get(id);
+    if (!rec) return undefined;
+    const m = rec.manifest;
+    const required = m.requiredPermissions ?? [];
+    if (rec.system && (required.length ? required : m.permissions).includes(permission)) return { kind: "system", reason: "Protected by the system: this plugin cannot work without it.", by: [] };
+    if (!rec.system && required.includes(permission)) return { kind: "required", reason: "The plugin cannot work without this permission. Disable the plugin instead.", by: [] };
+    const feats = (m.features ?? []).filter((f) => f.requires.includes(permission) && this.featureEnabled(id, f.id));
+    if (feats.length) return { kind: "feature", reason: `Used by the enabled feature${feats.length > 1 ? "s" : ""}: ${feats.map((f) => f.title).join(", ")}. Turn ${feats.length > 1 ? "them" : "it"} off first.`, by: feats.map((f) => f.id) };
+    const needs = this.permissions.snapshot(id).granted.filter((g) => g !== permission && (permissionInfo(g).requires ?? []).includes(permission));
+    if (needs.length) return { kind: "permission", reason: `Needed by the permission ${needs.join(", ")}. Turn it off first.`, by: needs };
+    return undefined;
+  }
+
+  private locksOf(id: string): Record<string, PermissionLock> {
+    const out: Record<string, PermissionLock> = {};
+    for (const p of this.permissions.snapshot(id).declared) {
+      const l = this.lockOf(id, p);
+      if (l) out[p] = l;
+    }
+    return out;
+  }
+
+  isSystem(id: string): boolean {
+    return !!this.records.get(id)?.system;
+  }
+
+  /** Throws if `id` may not be uninstalled: system plugins, and plugins other enabled plugins still depend on. */
+  assertRemovable(id: string): void {
+    const rec = this.mustGet(id);
+    if (rec.system) throw new SystemProtectedError(id, "uninstalled");
+    const users = dependentsOf(this.graph(), id).filter((d) => this.records.get(d)?.enabled);
+    if (users.length) throw new FrameworkError(`"${id}" is required by ${users.map((u) => `"${u}"`).join(", ")}. Disable or uninstall ${users.length > 1 ? "them" : "it"} first (dependencies are never removed automatically).`, "FLUX_HAS_DEPENDENTS", id);
+  }
+
+  featuresOf(id: string): FeatureInfo[] {
+    return (this.records.get(id)?.manifest.features ?? []).map((f) => ({ id: f.id, title: f.title, description: f.description, requires: f.requires, enabled: this.featureEnabled(id, f.id) }));
+  }
+
+  featureEnabled(id: string, feature: string): boolean {
+    const f = this.records.get(id)?.manifest.features?.find((x) => x.id === feature);
+    return f ? (this.policy.features[id]?.[feature] ?? f.default) : true;
+  }
+
+  /** Switches a feature on/off. Turning it on needs its permissions; the change is applied to the running plugin at once. */
+  async setFeature(id: string, feature: string, enabled: boolean): Promise<void> {
+    const rec = this.mustGet(id);
+    const f = rec.manifest.features?.find((x) => x.id === feature);
+    if (!f) throw new FrameworkError(`"${id}" has no feature "${feature}"`, "FLUX_UNKNOWN_FEATURE", id);
+    if (enabled) {
+      const missing = f.requires.filter((p) => !this.permissions.has(id, p));
+      if (missing.length) throw new FrameworkError(`Grant the permission${missing.length > 1 ? "s" : ""} ${missing.join(", ")} first to turn on "${f.title}".`, "FLUX_PERMISSION_REQUIRED", id);
+    }
+    (this.policy.features[id] ??= {})[feature] = enabled;
+    await this.savePolicy();
+    if (rec.state === "ready") await this.reload(id).catch(() => undefined);
+    else this.changed();
+  }
+
+  /** Who currently owns `capability`: the user's choice, else a system provider, else the first enabled one. */
+  capabilityOwner(capability: string): string | undefined {
+    const providers = [...this.records.values()].filter((r) => r.enabled && r.manifest.provides?.includes(capability));
+    if (!providers.length) return undefined;
+    const chosen = this.policy.capabilities[capability];
+    if (chosen && providers.some((p) => p.id === chosen)) return chosen;
+    return (providers.find((p) => p.system) ?? [...providers].sort((a, b) => a.id.localeCompare(b.id))[0]!).id;
+  }
+
+  capabilities(): CapabilityInfo[] {
+    const caps = new Set<string>();
+    for (const r of this.records.values()) if (r.enabled) for (const c of r.manifest.provides ?? []) caps.add(c);
+    return [...caps].sort().map((capability) => {
+      const providers = [...this.records.values()].filter((r) => r.enabled && r.manifest.provides?.includes(capability)).map((r) => ({ id: r.id, name: r.manifest.name, isSystem: !!r.system }));
+      return { capability, owner: this.capabilityOwner(capability), providers, conflict: providers.length > 1 };
+    });
+  }
+
+  /** Similar plugins are not interchangeable: exactly one owns each capability; the others stay quiet for it. */
+  async setCapabilityOwner(capability: string, id: string): Promise<void> {
+    const rec = this.mustGet(id);
+    if (!rec.enabled || !rec.manifest.provides?.includes(capability)) throw new FrameworkError(`"${id}" is not an enabled provider of "${capability}"`, "FLUX_UNKNOWN_CAPABILITY", id);
+    this.policy.capabilities[capability] = id;
+    await this.savePolicy();
+    for (const r of [...this.records.values()]) if (r.enabled && r.manifest.provides?.includes(capability) && r.state === "ready") await this.reload(r.id).catch(() => undefined);
+    this.changed();
+  }
+
+  private gateOpen(rec: PluginRecord, e: Gated): boolean {
+    if (e.feature && !this.featureEnabled(rec.id, e.feature)) return false;
+    if (e.capability && rec.manifest.provides?.includes(e.capability) && this.capabilityOwner(e.capability) !== rec.id) return false;
+    return true;
+  }
+
   private async applyDeclarative(rec: PluginRecord): Promise<void> {
     const def = rec.definition!;
     const ctx = rec.context!;
+    const on = <T,>(list: T[] | undefined): T[] => (list ?? []).filter((e) => this.gateOpen(rec, e as Gated));
     const renderer = this.runtime === "renderer";
     const main = this.runtime === "main";
 
     for (const [id, component] of Object.entries(def.layouts ?? {})) if (renderer) ctx.routes.registerLayout(id, component);
-    if (renderer) for (const r of def.routes ?? []) ctx.routes.register(r);
-    for (const c of def.commands ?? []) ctx.commands.register(c);
-    for (const m of def.menus ?? []) ctx.menus.register(m);
-    for (const h of def.hooks ?? []) ctx.hooks.use(h.name, h.handler, { priority: h.priority });
+    if (renderer) for (const r of on(def.routes)) ctx.routes.register(r);
+    for (const c of on(def.commands)) ctx.commands.register(c);
+    for (const m of on(def.menus)) ctx.menus.register(m);
+    for (const h of on(def.hooks)) ctx.hooks.use(h.name, h.handler, { priority: h.priority });
     const services = typeof def.services === "function" ? def.services(ctx) : def.services;
     for (const [name, impl] of Object.entries(services ?? {})) ctx.services.register(name, impl);
-    if (main) for (const i of def.ipc ?? []) ctx.ipc.define(i);
-    for (const e of def.events ?? []) ctx.events.on(e.name, e.handler, { priority: e.priority, once: e.once });
-    if (renderer) for (const c of def.components ?? []) ctx.ui.register(c);
+    if (main) for (const i of on(def.ipc)) ctx.ipc.define(i);
+    for (const e of on(def.events)) ctx.events.on(e.name, e.handler, { priority: e.priority, once: e.once });
+    if (renderer) for (const c of on(def.components)) ctx.ui.register(c);
     if (renderer) {
-      for (const x of def.extensions ?? []) {
+      for (const x of on(def.extensions)) {
         try {
           ctx.ui.extend(x.point, { ...x.contribution, priority: x.priority });
         } catch (e) {

@@ -54,6 +54,17 @@ export function declareHostPoints(framework: RendererFramework): void {
   if (!ep.definition("settings")) {
     ep.declare({ name: "settings", contributions: { sections: s.object({ id: s.string(), title: s.string(), icon: s.string().optional(), order: s.number().optional(), component: s.custom<React.ComponentType>(isComponent, "expected a React component") }) } });
   }
+  if (!ep.definition("fileHandlers")) {
+    ep.declare({
+      name: "fileHandlers",
+      contributions: {
+        handlers: s.object({
+          id: s.string(), title: s.string(), extensions: s.array(s.string()), mimeTypes: s.array(s.string()).optional(), mode: s.enum(["route", "modal", "import"] as const),
+          route: s.string().optional(), component: s.custom<unknown>(() => true).optional(), import: s.fn().optional(), priority: s.number().optional(),
+        }),
+      },
+    });
+  }
   declareI18nPoints(framework);
 }
 

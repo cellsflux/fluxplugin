@@ -4,6 +4,11 @@ import {
   PluginManager,
   errorMessage,
   type Bootstrap,
+  type CapabilityInfo,
+  type CatalogQuery,
+  type InstallPlan,
+  type Page,
+  type UpdateAnalysis,
   type FluxBridge,
   type IpcContract,
   type IpcErrorPayload,
@@ -43,14 +48,23 @@ export class PluginsClient {
   uninstall = (id: string) => this.call<PluginInfo[]>(MGMT.uninstall, { id });
   search = (query?: string) => this.call<RegistryEntryLike[]>(MGMT.search, { query });
   updates = () => this.call<RegistryEntryLike[]>(MGMT.updates);
-  install = (entry: RegistryEntryLike) => this.call<{ id: string; version: string }>(MGMT.install, { entry });
-  update = (entry: RegistryEntryLike) => this.call<{ id: string; version: string }>(MGMT.update, { entry });
+  /** Installs with every missing dependency, as one transaction. The server resolves the entry by id: the UI cannot forge a download. */
+  install = (e: { id: string; version?: string }) => this.call<{ id: string; version: string }>(MGMT.install, { id: e.id, version: e.version });
+  update = (e: { id: string; version?: string }) => this.call<{ id: string; version: string }>(MGMT.update, { id: e.id, version: e.version });
+  catalog = (q: CatalogQuery & { refresh?: boolean } = {}) => this.call<Page<RegistryEntryLike> & { totalAll: number; categories: { name: string; count: number }[]; errors: { source: string; message: string }[]; conflicts: unknown[]; fetchedAt: number }>(MGMT.catalog, q);
+  plan = (id: string) => this.call<InstallPlan>(MGMT.plan, { id });
+  analyze = (id: string) => this.call<UpdateAnalysis | undefined>(MGMT.analyze, { id });
+  setFeature = (id: string, feature: string, enabled: boolean) => this.call<PluginInfo>(MGMT.feature, { id, feature, enabled });
+  capabilities = () => this.call<CapabilityInfo[]>(MGMT.capabilities);
+  setCapability = (capability: string, id: string) => this.call<CapabilityInfo[]>(MGMT.capability, { capability, id });
+  setLicense = (id: string, token?: string) => this.call<PluginInfo>(MGMT.license, { id, token });
   rollback = (id: string, version?: string) => this.call<{ id: string; version: string }>(MGMT.rollback, { id, version });
   configGet = <T = Record<string, unknown>>(id: string) => this.call<T>(MGMT.configGet, { id });
   configSet = <T = Record<string, unknown>>(id: string, patch: Partial<T>) => this.call<T>(MGMT.configSet, { id, patch });
   configReset = <T = Record<string, unknown>>(id: string) => this.call<T>(MGMT.configReset, { id });
   configSchema = (id: string) => this.call<import("../core/index.js").SchemaDescription | null>(MGMT.configSchema, { id });
   logs = (id?: string) => this.call<import("../core/index.js").LogEntry[]>(MGMT.logs, { id });
+  readme = (id: string, locale: string) => this.call<{ text: string; translated: boolean; from?: string; to?: string; provider?: string; reason?: string }>(MGMT.readme, { id, locale });
   details = (id: string) => this.call<PluginDetails>(MGMT.details, { id });
   diagnostics = (id: string) => this.call<{ info: PluginInfo; logs: import("../core/index.js").LogEntry[]; contributions: Record<string, number> }>(MGMT.diagnostics, { id });
 }
@@ -170,13 +184,14 @@ export class RendererFramework {
   }
 
   private async reconcile(boot: Bootstrap): Promise<void> {
+    await this.manager.applyPolicy(boot.policy); // same feature/capability decisions as the main process, before any plugin starts
     const seen = new Set<string>();
     for (const d of boot.plugins) {
       seen.add(d.id);
       this.permissions.restore({ [d.id]: d.granted });
       if (!this.manager.has(d.id)) {
         if (d.state === "error" && !d.rendererUrl) continue; // rejected by main (validation / integrity)
-        this.manager.register({ manifest: d.manifest, origin: "renderer", load: () => this.load(d) });
+        this.manager.register({ manifest: d.manifest, origin: "renderer", system: d.isSystem === true, load: () => this.load(d) });
         this.permissions.restore({ [d.id]: d.granted });
       } else {
         // Refresh grants in place; declare() would reset them, so restore + notify only.

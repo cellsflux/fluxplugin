@@ -1,40 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { compareVersions, validateManifest, type PluginManifest } from "../core/index.js";
+import { analyzeUpdate, compareVersions, dedupeEntries, filterEntries, planInstall, validateManifest, type CatalogConflict, type InstallPlan, type InstalledSnapshot, type PluginManifest, type RegistryEntryLike, type UpdateAnalysis } from "../core/index.js";
 import { MANIFEST_FILE } from "./discover.js";
 import { createTarGz, extractTarGz } from "./tar.js";
 
-export interface RegistryEntry {
-  id: string;
-  name: string;
-  version: string;
-  description?: string;
-  author?: string;
-  permissions: string[];
-  /** Opaque location understood by the registry that produced the entry. */
-  location: string;
-  source: string;
-  /** sha256 hex of the archive when the registry knows it. */
-  sha256?: string;
-  homepage?: string;
-  stars?: number;
-  iconUrl?: string;
-  bannerUrl?: string;
-  screenshots?: string[];
-  video?: string;
-  categories?: string[];
-  keywords?: string[];
-  links?: Record<string, string>;
-  license?: string;
-  readme?: string;
-  /** Filled in by the app: version already installed locally. */
-  installedVersion?: string;
-  /** Folder entry: `location` is a folder URL; download `files` and verify them against `hashes`. */
-  folder?: boolean;
-  files?: string[];
-  hashes?: Record<string, string>;
-}
+/** One plugin listed by a store — the same type the UI and the catalog logic use (no parallel definition). */
+export type RegistryEntry = RegistryEntryLike;
 
 /**
  * Abstraction over where plugins come from. Implement it for npm, GitHub releases, a private HTTP registry,
@@ -61,12 +33,19 @@ const toEntry = (m: PluginManifest, location: string, source: string, sha256?: s
   description: m.description,
   author: typeof m.author === "string" ? m.author : m.author?.name,
   permissions: m.permissions ?? [],
+  dependencies: { ...m.dependencies, ...m.peerDependencies },
+  provides: m.provides,
+  conflicts: m.conflicts,
+  pricing: m.pricing,
+  categories: m.categories,
+  keywords: m.keywords,
+  license: m.license,
   location,
   source,
   sha256,
 });
 
-const RUNTIME_DIRS = new Set(["dist", "assets", "images", "docs"]);
+const RUNTIME_DIRS = new Set(["dist", "assets", "images", "docs", "updates"]);
 const RUNTIME_FILES = /^(plugin\.json|readme(\.[a-z]+)?|license(\.[a-z]+)?|changelog(\.[a-z]+)?|icon\.(png|svg|jpg|webp))$/i;
 const SOURCE_FILE = /\.(tsx?|jsx|map|scss|sass|less)$/i;
 
@@ -87,7 +66,7 @@ export async function copyPluginRuntime(src: string, dest: string): Promise<stri
       const r = rel ? path.join(rel, e.name) : e.name;
       if (e.isDirectory()) {
         if (rel === "" ? RUNTIME_DIRS.has(e.name) : true) await walk(r);
-      } else if (e.isFile()) {
+      } else if (e.isFile() && !e.name.startsWith(".")) {
         const top = r.split(path.sep)[0]!;
         const ok = referenced.has(r) || (rel === "" ? RUNTIME_FILES.test(e.name) : RUNTIME_DIRS.has(top) && !SOURCE_FILE.test(e.name));
         if (!ok || (SOURCE_FILE.test(e.name) && !referenced.has(r))) continue;
@@ -139,6 +118,13 @@ export interface StoreIndexPlugin {
   links?: Record<string, string>;
   /** Markdown, inline (keep it short) */
   readme?: string;
+  dependencies?: Record<string, string>;
+  provides?: string[];
+  conflicts?: string[];
+  pricing?: RegistryEntryLike["pricing"];
+  updatedAt?: string;
+  /** Release notes (updates/<version>.md), newest first. */
+  updates?: { version: string; notes: string }[];
 }
 export interface StoreIndex {
   plugins: StoreIndexPlugin[];
@@ -171,6 +157,7 @@ export function entriesFromIndex(index: StoreIndex | StoreIndexPlugin[], baseUrl
       video: p.video ? (p.video.startsWith("./") && folderUrl ? abs(new URL(p.video, folderUrl).href) : abs(p.video)) : undefined,
       categories: p.categories, keywords: p.keywords, links: p.links, readme: p.readme,
       folder: isFolder || undefined, files: isFolder ? p.files : undefined, hashes: p.hashes,
+      dependencies: p.dependencies, provides: p.provides, conflicts: p.conflicts, pricing: p.pricing, updatedAt: p.updatedAt, updates: p.updates,
     });
   }
   return out;
@@ -308,24 +295,102 @@ export interface InstallResult {
   previousVersion?: string;
 }
 
+/** Written next to the plugin's files at install time: lets later checks detect any change (even without a version bump). */
+export interface InstallRecord {
+  id: string;
+  version: string;
+  source: string;
+  installedAt: string;
+  packageSha256?: string;
+  files: Record<string, string>;
+}
+export const INSTALL_RECORD = ".flux-install.json";
+
+export interface CatalogSnapshot {
+  /** One entry per plugin id. */
+  entries: RegistryEntry[];
+  /** Every listing before de-duplication (all versions, all stores). */
+  all: RegistryEntry[];
+  conflicts: CatalogConflict[];
+  errors: { source: string; message: string }[];
+  fetchedAt: number;
+}
+
+async function hashDir(dir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const walk = async (rel: string): Promise<void> => {
+    for (const e of await fs.readdir(path.join(dir, rel), { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) await walk(r);
+      else if (e.isFile() && e.name !== INSTALL_RECORD) out[r] = crypto.createHash("sha256").update(await fs.readFile(path.join(dir, r))).digest("hex");
+    }
+  };
+  await walk("");
+  return out;
+}
+
 /**
- * Installs plugins into a directory, keeping the previous version as a backup so `rollback` works.
- * Layout: `<pluginsDir>/<id>/` (active) and `<backupDir>/<id>/<version>/` (previous versions).
+ * Installs plugins into a directory. Everything is prepared (downloaded, verified, pruned) in a staging area first; files are only
+ * swapped in when every step succeeded, and any failure restores what was there before — for one plugin or a whole dependency set.
+ * Layout: `<pluginsDir>/<id>/` (active) and `<backupDir>/<id>/<version>/` (previous versions). User data and settings live outside
+ * the plugin folder (plugins-data), so updates never touch them.
  */
 export class PluginInstaller {
+  private cache?: { snap: CatalogSnapshot; key: string };
+  private inflight?: Promise<CatalogSnapshot>;
+
   constructor(
     private readonly pluginsDir: string,
     private readonly backupDir: string,
     private readonly registries: PluginRegistry[] = [],
+    private readonly cacheMs = 30_000,
   ) {}
+
+  /** Where plugins are installed. */
+  get dir(): string {
+    return this.pluginsDir;
+  }
 
   addRegistry(r: PluginRegistry): void {
     this.registries.push(r);
+    this.cache = undefined;
   }
 
+  /**
+   * The catalog of every store, **one entry per plugin id** (see `dedupeEntries`). Concurrent callers share one request, results are
+   * cached briefly, and a store that fails is reported in `errors` without hiding the others.
+   */
+  async catalog(opts: { refresh?: boolean } = {}): Promise<CatalogSnapshot> {
+    const key = this.registries.map((r) => r.name).join("|");
+    if (!opts.refresh && this.cache?.key === key && Date.now() - this.cache.snap.fetchedAt < this.cacheMs) return this.cache.snap;
+    if (this.inflight && !opts.refresh) return this.inflight;
+    const run = (async (): Promise<CatalogSnapshot> => {
+      const results = await Promise.allSettled(this.registries.map((r) => r.search()));
+      const all: RegistryEntry[] = [];
+      const errors: CatalogSnapshot["errors"] = [];
+      results.forEach((r, i) => (r.status === "fulfilled" ? all.push(...r.value) : errors.push({ source: this.registries[i]!.name, message: (r.reason as Error)?.message ?? String(r.reason) })));
+      const { entries, conflicts } = dedupeEntries(all, this.registries.map((r) => r.name)); // first store in the list is the reference
+      const snap = { entries, all, conflicts, errors, fetchedAt: Date.now() };
+      if (errors.length < this.registries.length || this.registries.length === 0) this.cache = { snap, key };
+      return snap;
+    })();
+    this.inflight = run;
+    try {
+      return await run;
+    } finally {
+      this.inflight = undefined;
+    }
+  }
+
+  /** De-duplicated search (text filter only; paging/categories are applied by `queryCatalog`). */
   async search(query?: string): Promise<RegistryEntry[]> {
-    const all = await Promise.allSettled(this.registries.map((r) => r.search(query)));
-    return all.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+    const { entries, errors } = await this.catalog();
+    if (errors.length && !entries.length) throw new Error(errors.map((e) => `${e.source}: ${e.message}`).join("; "));
+    return query ? filterEntries(entries, { q: query }) : entries;
+  }
+
+  async candidates(id: string): Promise<RegistryEntry[]> {
+    return (await this.catalog()).all.filter((e) => e.id === id);
   }
 
   async installed(): Promise<PluginManifest[]> {
@@ -344,32 +409,98 @@ export class PluginInstaller {
     return path.join(this.pluginsDir, id.replace(/[^a-z0-9.-]/gi, "_"));
   }
 
-  /** Installs (or updates) `entry`. The plugin directory is replaced atomically from a staging directory. */
-  async install(entry: RegistryEntry): Promise<InstallResult> {
-    const registry = this.registries.find((r) => r.name === entry.source);
-    if (!registry) throw new Error(`unknown registry "${entry.source}"`);
-    const stage = path.join(this.backupDir, ".staging", `${entry.id}-${Date.now()}`);
-    await fs.mkdir(path.dirname(stage), { recursive: true });
+  /** What is installed in `dir`: manifest facts + a hash of every file (+ the package checksum recorded at install time). */
+  async snapshotAt(dir: string): Promise<InstalledSnapshot> {
+    const m = (await readPluginManifest(dir)).manifest;
+    let record: InstallRecord | undefined;
     try {
-      const manifest = await registry.fetch(entry, stage);
-      await pruneNonRuntime(stage); // a store package never installs sources or sourcemaps, whatever it contains
-      if (manifest.id !== entry.id) throw new Error(`registry entry "${entry.id}" contains plugin "${manifest.id}"`);
-      const target = this.dirOf(entry.id);
-      let previousVersion: string | undefined;
-      try {
-        previousVersion = (await readPluginManifest(target)).manifest.version;
-        const bk = path.join(this.backupDir, entry.id, previousVersion);
-        await fs.rm(bk, { recursive: true, force: true });
-        await fs.mkdir(path.dirname(bk), { recursive: true });
-        await fs.rename(target, bk);
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code && (e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      record = JSON.parse(await fs.readFile(path.join(dir, INSTALL_RECORD), "utf8"));
+    } catch {
+      /* installed by hand / during development */
+    }
+    return {
+      id: m.id, version: m.version, name: m.name, description: m.description, license: m.license, provides: m.provides,
+      permissions: m.permissions ?? [], dependencies: { ...m.dependencies, ...m.peerDependencies }, files: await hashDir(dir), packageSha256: record?.packageSha256,
+    };
+  }
+
+  async analyze(entry: RegistryEntry, dir?: string): Promise<UpdateAnalysis | undefined> {
+    try {
+      return analyzeUpdate(await this.snapshotAt(dir ?? this.dirOf(entry.id)), entry);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** What would have to be installed for `entry`, given the plugins already present. Nothing is changed. */
+  async plan(entry: RegistryEntry, installed: Map<string, { version: string; conflicts?: string[] }>): Promise<InstallPlan> {
+    const { all } = await this.catalog();
+    return planInstall(entry, { installed, candidates: (id) => all.filter((e) => e.id === id) });
+  }
+
+  async install(entry: RegistryEntry): Promise<InstallResult> {
+    return (await this.installMany([entry]))[0]!;
+  }
+
+  /**
+   * Installs several plugins as one unit (dependencies first). Phase 1 downloads and verifies everything into staging; phase 2
+   * swaps the folders in. If anything fails, every folder touched is restored: nothing stays half-installed.
+   */
+  async installMany(entries: RegistryEntry[]): Promise<InstallResult[]> {
+    const staged: { entry: RegistryEntry; stage: string; manifest: PluginManifest }[] = [];
+    const cleanup = async () => void (await Promise.all(staged.map((s) => fs.rm(s.stage, { recursive: true, force: true }))));
+    try {
+      for (const entry of entries) {
+        const registry = this.registries.find((r) => r.name === entry.source) ?? this.registries.find((r) => (entry.sources ?? []).includes(r.name));
+        if (!registry) throw new Error(`unknown registry "${entry.source}"`);
+        const stage = path.join(this.backupDir, ".staging", `${entry.id}-${Date.now()}-${staged.length}`);
+        await fs.mkdir(path.dirname(stage), { recursive: true });
+        staged.push({ entry, stage, manifest: undefined as never });
+        const manifest = await registry.fetch(entry, stage);
+        await pruneNonRuntime(stage); // a store package never installs sources or sourcemaps, whatever it contains
+        if (manifest.id !== entry.id) throw new Error(`registry entry "${entry.id}" contains plugin "${manifest.id}"`);
+        if (manifest.version !== entry.version) throw new Error(`"${entry.id}": the package is version ${manifest.version} but the catalog announced ${entry.version}`);
+        staged[staged.length - 1]!.manifest = manifest;
       }
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.rename(stage, target);
-      return { id: entry.id, version: manifest.version, previousVersion };
+    } catch (e) {
+      await cleanup(); // nothing was touched yet
+      throw e;
+    }
+    const undo: (() => Promise<void>)[] = [];
+    const results: InstallResult[] = [];
+    try {
+      for (const { entry, stage, manifest } of staged) {
+        const target = this.dirOf(entry.id);
+        let previousVersion: string | undefined;
+        let backup: string | undefined;
+        try {
+          previousVersion = (await readPluginManifest(target)).manifest.version;
+        } catch {
+          /* not installed (or unreadable) */
+        }
+        if (await fs.stat(target).then(() => true, () => false)) {
+          backup = path.join(this.backupDir, entry.id, previousVersion ?? `unreadable-${Date.now()}`);
+          await fs.rm(backup, { recursive: true, force: true });
+          await fs.mkdir(path.dirname(backup), { recursive: true });
+          await fs.rename(target, backup);
+        }
+        undo.push(async () => {
+          await fs.rm(target, { recursive: true, force: true });
+          if (backup) await fs.rename(backup, target);
+        });
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.rename(stage, target);
+        const record: InstallRecord = { id: entry.id, version: manifest.version, source: entry.source, installedAt: new Date().toISOString(), packageSha256: entry.sha256, files: await hashDir(target) };
+        await fs.writeFile(path.join(target, INSTALL_RECORD), JSON.stringify(record, null, 2));
+        results.push({ id: entry.id, version: manifest.version, previousVersion });
+      }
+      this.cache = undefined;
+      return results;
+    } catch (e) {
+      for (const u of undo.reverse()) await u().catch(() => undefined); // restore every folder we touched
+      throw e;
     } finally {
-      await fs.rm(stage, { recursive: true, force: true });
+      await cleanup();
     }
   }
 
@@ -404,10 +535,11 @@ export class PluginInstaller {
       if ((e as NodeJS.ErrnoException).code && (e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
     await fs.rename(path.join(this.backupDir, id, target), dir);
+    this.cache = undefined;
     return { id, version: target, previousVersion: current };
   }
 
-  /** Entries from registries that are newer than what is installed. */
+  /** Catalog entries newer than what is installed in this folder (see `analyze` for the details). */
   async updates(): Promise<RegistryEntry[]> {
     const installed = new Map((await this.installed()).map((m) => [m.id, m.version]));
     return (await this.search()).filter((e) => installed.has(e.id) && compareVersions(e.version, installed.get(e.id)!) > 0);

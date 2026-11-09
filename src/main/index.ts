@@ -9,3 +9,7 @@ export * from "./serve-web.js";
 export * from "./github-registry.js";
 export * from "./stores.js";
 export * from "./assets.js";
+export * from "./desktop.js";
+export * from "./translate.js";
+export * from "./updater.js";
+export * from "./window-guard.js";

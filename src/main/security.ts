@@ -107,3 +107,39 @@ export async function verifyPlugin(root: string, raw: Record<string, unknown>, m
   }
   return warnings;
 }
+
+/* ------------------------------------------------------------------ licenses */
+
+export interface LicenseClaims {
+  plugin: string;
+  holder?: string;
+  /** ISO date; omit for a perpetual license. */
+  expires?: string;
+  issuedAt: string;
+}
+
+const b64u = (b: Buffer) => b.toString("base64url");
+
+/** Author side: signs a license token for one plugin with the author's private key (public key → `pricing.publicKey`). */
+export function createLicense(privateKeyB64: string, claims: Omit<LicenseClaims, "issuedAt"> & { issuedAt?: string }): string {
+  const key = crypto.createPrivateKey({ key: Buffer.from(privateKeyB64, "base64"), format: "der", type: "pkcs8" });
+  const payload = Buffer.from(JSON.stringify({ ...claims, issuedAt: claims.issuedAt ?? new Date().toISOString() }));
+  return `${b64u(payload)}.${b64u(crypto.sign(null, payload, key))}`;
+}
+
+export function verifyLicenseToken(publicKeyB64: string | undefined, token: string, pluginId: string, now = Date.now()): { ok: true; claims: LicenseClaims } | { ok: false; reason: string } {
+  if (!publicKeyB64) return { ok: false, reason: "the author did not publish a public key, so licenses cannot be verified" };
+  const [p, sig] = token.split(".");
+  if (!p || !sig) return { ok: false, reason: "malformed license" };
+  try {
+    const payload = Buffer.from(p, "base64url");
+    const pub = crypto.createPublicKey({ key: Buffer.from(publicKeyB64, "base64"), format: "der", type: "spki" });
+    if (!crypto.verify(null, payload, pub, Buffer.from(sig, "base64url"))) return { ok: false, reason: "invalid license signature" };
+    const claims = JSON.parse(payload.toString()) as LicenseClaims;
+    if (claims.plugin !== pluginId) return { ok: false, reason: `this license is for "${claims.plugin}", not "${pluginId}"` };
+    if (claims.expires && Date.parse(claims.expires) < now) return { ok: false, reason: `license expired on ${claims.expires.slice(0, 10)}` };
+    return { ok: true, claims };
+  } catch {
+    return { ok: false, reason: "invalid license" };
+  }
+}

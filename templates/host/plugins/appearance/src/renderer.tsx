@@ -63,7 +63,7 @@ function AppearanceSection() {
 export default definePlugin({
   extensions: [
     { point: "settings", contribution: { sections: [{ id: "appearance", title: "Appearance", icon: "palette", order: 10, component: AppearanceSection }] } },
-    { point: "theme", contribution: { themes: [
+    { point: "theme", capability: "theme", contribution: { themes: [
       { id: "midnight", label: "Midnight", dark: true, tokens: { "--flux-bg": "#0b1020", "--flux-surface": "#111936", "--flux-surface-2": "#1a2447", "--flux-fg": "#e6ebff", "--flux-muted": "#8f9bc7", "--flux-border": "rgba(150,170,255,.18)", "--flux-accent": "#7c9cff", "--flux-material": "rgba(17,25,54,.72)" } },
       { id: "sunset", label: "Sunset", tokens: { "--flux-bg": "#fff8f1", "--flux-surface": "#ffefe0", "--flux-surface-2": "#ffe0c7", "--flux-fg": "#3b1f12", "--flux-muted": "#9a6b53", "--flux-border": "rgba(120,60,20,.16)", "--flux-accent": "#ff6a3d", "--flux-material": "rgba(255,239,224,.8)" } },
       { id: "forest", label: "Forest", dark: true, tokens: { "--flux-bg": "#0f1a14", "--flux-surface": "#162720", "--flux-surface-2": "#1f3a2e", "--flux-fg": "#e4f3ea", "--flux-muted": "#8fb3a0", "--flux-border": "rgba(150,230,190,.16)", "--flux-accent": "#34d399", "--flux-material": "rgba(22,39,32,.74)" } },

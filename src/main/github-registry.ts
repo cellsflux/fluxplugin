@@ -31,6 +31,11 @@ export interface PluginDescriptor {
   file: string;
   sha256: string;
   icon?: string;
+  dependencies?: Record<string, string>;
+  provides?: string[];
+  conflicts?: string[];
+  pricing?: RegistryEntry["pricing"];
+  updates?: { version: string; notes: string }[];
 }
 
 const isLoopback = (h: string) => h === "127.0.0.1" || h === "localhost" || h === "[::1]";
@@ -109,7 +114,7 @@ export class GitHubRegistry implements PluginRegistry {
           const d = (await (await this.get(descAsset.browser_download_url, "application/json")).json()) as PluginDescriptor;
           const pkg = rel.assets?.find((a) => a.name === d.file);
           if (!d || typeof d.id !== "string" || typeof d.version !== "string" || !pkg || !/^[0-9a-f]{64}$/.test(d.sha256 ?? "")) continue;
-          out.push({ id: d.id, name: d.name ?? d.id, version: d.version, description: d.description, author: d.author, permissions: d.permissions ?? [], location: pkg.browser_download_url, source: this.name, sha256: d.sha256, homepage: repo.html_url, stars: repo.stargazers_count });
+          out.push({ id: d.id, name: d.name ?? d.id, version: d.version, description: d.description, author: d.author, permissions: d.permissions ?? [], location: pkg.browser_download_url, source: this.name, sha256: d.sha256, homepage: repo.html_url, stars: repo.stargazers_count, dependencies: d.dependencies, provides: d.provides, conflicts: d.conflicts, pricing: d.pricing, updates: d.updates });
         } catch (e) {
           if (/rate limit/i.test((e as Error).message)) throw e; // surface it; other repos failing individually is normal
         }

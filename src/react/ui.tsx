@@ -76,3 +76,19 @@ export function Button({ variant = "secondary", size = "md", children, ...rest }
     </button>
   );
 }
+
+/** Modal confirmation dialog (important operations: dependencies, sensitive permissions, updates, licenses). */
+export function Dialog({ title, children, confirmLabel, cancelLabel = "Cancel", onConfirm, onCancel, danger, busy }: { title: ReactNode; children?: ReactNode; confirmLabel?: string; cancelLabel?: string; onConfirm?: () => void; onCancel: () => void; danger?: boolean; busy?: boolean }): React.ReactElement {
+  return (
+    <div className="flux-dialog-backdrop" role="presentation" onMouseDown={onCancel}>
+      <div className="flux-dialog" role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} data-testid="dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <div className="flux-dialog-body">{children}</div>
+        <div className="flux-dialog-actions">
+          <Button onClick={onCancel}>{cancelLabel}</Button>
+          {onConfirm && <Button variant={danger ? "destructive" : "primary"} disabled={busy} onClick={onConfirm} data-testid="dialog-confirm">{busy ? "…" : (confirmLabel ?? "OK")}</Button>}
+        </div>
+      </div>
+    </div>
+  );
+}

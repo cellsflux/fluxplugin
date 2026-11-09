@@ -1,4 +1,4 @@
-import { MainFramework, type StoreSpec } from "fluxplugin/main";
+import { MainFramework, type DesktopBackend, type StoreSpec, type TranslateConfig } from "fluxplugin/main";
 import config from "../../../fluxplugin.config.json"; // bundled into the app at build time
 import { CHANNELS } from "../shared/constants";
 import { registerOperations } from "./operations";
@@ -10,6 +10,8 @@ export interface FrameworkOptions {
   dataDir: string;
   dev?: boolean;
   assetUrl?: (id: string, rel: string) => string;
+  desktop?: { backend: DesktopBackend };
+  updates?: ConstructorParameters<typeof MainFramework>[0]["updates"];
 }
 
 /** Creates the plugin framework. Shared by the Electron entry (index.ts) and the browser entry (web.ts). */
@@ -23,6 +25,13 @@ export function createFramework(opts: FrameworkOptions): MainFramework {
     // Where "Plugins → Available" looks. Default: GitHub (every repo that published with `fluxplugin publish`).
     // Edit "stores" in fluxplugin.config.json to add your own store (github catalog, http, local) — see docs/STORE.md.
     stores: config.stores as StoreSpec[],
+    // README translation (off by default; set "translate.enabled" in fluxplugin.config.json)
+    translate: (config as { translate?: TranslateConfig }).translate,
+    desktop: opts.desktop,
+    updates: opts.updates,
+    // System plugins: cannot be disabled or uninstalled and keep their required permissions. Only ids listed HERE are trusted — a plugin
+    // downloaded from a store cannot declare itself "system" by editing its manifest.
+    systemPlugins: ["com.fluxplugin.appearance", "com.fluxplugin.language"],
     requireApproval: false, // true → users must approve each plugin's permissions
     allowedRendererChannels: [CHANNELS.createItem, CHANNELS.setTitleBarOverlay],
   });

@@ -11,6 +11,12 @@ import {
   errorMessage,
   serializeError,
   type Bootstrap,
+  API_CHANNELS,
+  type CatalogQuery,
+  type InstallPlan,
+  compareVersions,
+  isValidVersion,
+  queryCatalog,
   type PluginDetails,
   parseVideo,
   type InvokeRequest,
@@ -21,8 +27,12 @@ import {
 } from "../core/index.js";
 import { discoverPlugins, readPluginDir, type DiscoverOptions } from "./discover.js";
 import { FsStorageBackend, JsonStateFile } from "./fs-storage.js";
-import { PluginInstaller, type PluginRegistry } from "./registry.js";
+import { PluginInstaller, type PluginRegistry, type RegistryEntry } from "./registry.js";
 import { createRegistries, type StoreSpec } from "./stores.js";
+import { verifyLicenseToken } from "./security.js";
+import { AppUpdater, type UpdateSource } from "./updater.js";
+import { TranslationCache, createTranslator, detectLanguage, translateMarkdown, type TranslateConfig, type Translator } from "./translate.js";
+import { DesktopService, registerDesktopApi, type DesktopBackend, type DesktopOptions } from "./desktop.js";
 
 export interface MainFrameworkOptions {
   /** Directories scanned for plugins (each sub-directory with a plugin.json). */
@@ -37,6 +47,33 @@ export interface MainFrameworkOptions {
   stores?: StoreSpec[];
   /** Third-party plugins start with no permissions until the user approves them. Default: false (all declared granted). */
   requireApproval?: boolean;
+  /**
+   * Plugin ids the host trusts as **system plugins** (cannot be disabled or uninstalled, protected permissions). A plugin must also
+   * claim `"isSystem": true` in its manifest — a claim alone, e.g. from a store download, is ignored.
+   */
+  systemPlugins?: string[];
+  /** Public keys (base64 SPKI): a manifest that claims `isSystem` and is validly signed by one of them is trusted as well. */
+  systemKeys?: string[];
+  /** FluxAPI: native notifications, file dialogs/read/write, clipboard, links, app info, and files opened by the OS. */
+  desktop?: { backend: DesktopBackend } & DesktopOptions;
+  /** Automatic translation of plugin READMEs that are not in the interface language (off unless `enabled`). */
+  translate?: TranslateConfig;
+  /** Application updates (progressive, from any static server or GitHub releases). */
+  updates?: {
+    source: UpdateSource;
+    /** `<userData>/app-updates` */
+    dir: string;
+    currentVersion: string;
+    payloadDir: string;
+    /** Installed application version (for `minHost`) and the update signing public key. */
+    hostVersion?: string;
+    publicKey?: string;
+    checkOnStart?: boolean;
+    intervalHours?: number;
+    autoDownload?: boolean;
+    /** Relaunch the application (e.g. `app.relaunch(); app.exit(0)`). */
+    restart?: () => void;
+  };
   /** Reject plugins without a valid signature from one of these keys. */
   trustedKeys?: string[];
   requireSignature?: boolean;
@@ -70,6 +107,7 @@ export class MainFramework {
   private readonly broadcastListeners = new Set<BroadcastListener>();
   private watchers: FSWatcher[] = [];
   private revision = 0;
+  private licenses: Record<string, string> = {};
   private reloadTimers = new Map<string, NodeJS.Timeout>();
   private started = false;
 
@@ -86,6 +124,9 @@ export class MainFramework {
       permissions: this.permissions,
       logs: this.logs,
       frameworkVersion: options.frameworkVersion,
+      isSystemPlugin: (m) => m.isSystem === true && ((options.systemPlugins ?? []).includes(m.id) || (!!m.signature && (options.systemKeys ?? []).includes(m.signature.publicKey))),
+      policyStore: { load: async () => (await this.state.readAll()).policy, save: (policy) => this.state.update({ policy }) },
+      activationGuard: (m) => this.licenseProblem(m),
       stateStore: {
         load: async () => (await this.state.readAll()).disabled,
         save: (ids) => this.state.update({ disabled: ids }),
@@ -100,8 +141,33 @@ export class MainFramework {
       this.broadcast(MGMT.changed, { revision: this.revision });
     });
     this.manager.notifications.onPush((n) => this.broadcast("flux.notification", n));
+    if (options.updates) {
+      const u = options.updates;
+      this.updater = new AppUpdater({ source: u.source, dir: u.dir, currentVersion: u.currentVersion, payloadDir: u.payloadDir, hostVersion: u.hostVersion, publicKey: u.publicKey, onState: (s) => this.broadcast("flux.update.state", s) });
+      const up = this.updater;
+      const ipc = this.manager.ipc;
+      ipc.handle("flux.update.state", () => up.state, "host", {});
+      ipc.handle("flux.update.check", async () => { const s = await up.check(); if (s.status === "available" && u.autoDownload) void up.download(); return s; }, "host", {});
+      ipc.handle("flux.update.download", () => (void up.download(), up.state), "host", {});
+      ipc.handle("flux.update.cancel", () => (up.cancel(), up.state), "host", {});
+      ipc.handle("flux.update.releases", () => up.releases(), "host", {});
+      ipc.handle("flux.update.restart", () => { up.apply(); u.restart?.(); return true; }, "host", {});
+    }
+    this.translator = createTranslator(options.translate);
+    this.translations = new TranslationCache(path.join(options.dataDir, "translations.json"));
     this.registerManagementApi();
+    if (options.desktop) {
+      this.desktop = new DesktopService(options.desktop.backend, this.permissions, options.desktop);
+      registerDesktopApi(this, this.desktop);
+    }
   }
+  /** Application updater (present when `updates` is configured). */
+  updater?: AppUpdater;
+  private updateTimers: ReturnType<typeof setTimeout>[] = [];
+  private translator?: Translator;
+  private translations!: TranslationCache;
+  /** FluxAPI service (present when `desktop` is configured). */
+  desktop?: DesktopService;
 
   /* --------------------------------------------------------- start / stop */
 
@@ -113,9 +179,16 @@ export class MainFramework {
     const g = globalThis as unknown as { __FLUXPLUGIN_SHARED__?: Record<string, unknown> };
     g.__FLUXPLUGIN_SHARED__ = { ...(g.__FLUXPLUGIN_SHARED__ ?? {}), "fluxplugin": core };
     this.permissions.restore(approved as Record<string, Permission[]>);
+    this.licenses = (await this.state.readAll()).licenses;
     await this.manager.init();
     await this.scan();
     await this.manager.startup();
+    const u = this.options.updates;
+    if (this.updater && u) {
+      const check = () => void this.updater!.check().then((s) => s.status === "available" && u.autoDownload && void this.updater!.download());
+      if (u.checkOnStart !== false) this.updateTimers.push(setTimeout(check, 3000));
+      if (u.intervalHours) this.updateTimers.push(setInterval(check, u.intervalHours * 3_600_000) as never);
+    }
     if (this.options.hotReload) this.watch();
   }
 
@@ -136,6 +209,7 @@ export class MainFramework {
   }
 
   async stop(): Promise<void> {
+    for (const timer of this.updateTimers) clearTimeout(timer);
     for (const w of this.watchers) w.close();
     this.watchers = [];
     for (const t of this.reloadTimers.values()) clearTimeout(t);
@@ -216,16 +290,20 @@ export class MainFramework {
         rendererUrl: m.renderer && !rejected ? assetUrl(info.id, m.renderer) : undefined,
         styleUrls: (m.styles ?? []).map((s) => assetUrl(info.id, s)),
         granted: info.permissions.granted,
+        isSystem: info.isSystem,
         state: info.state,
       };
     });
-    return { frameworkVersion: this.options.frameworkVersion ?? FRAMEWORK_VERSION, plugins, preload: this.manager.preload.manifest(), revision: this.revision };
+    return { frameworkVersion: this.options.frameworkVersion ?? FRAMEWORK_VERSION, plugins, preload: this.manager.preload.manifest(), revision: this.revision, policy: this.manager.getPolicy() };
   }
 
   /* --------------------------------------------------- renderer-facing IPC */
 
   private exposedChannels(kind: "invoke" | "send"): Set<string> {
     const out = new Set<string>(this.options.allowedRendererChannels ?? []);
+    if (this.desktop) for (const c of Object.values(API_CHANNELS)) out.add(c);
+    if (this.updater) for (const c of ["state", "check", "download", "cancel", "releases", "restart"]) out.add(`flux.update.${c}`);
+    out.add("flux.app.confirmClose").add("flux.app.closeAck");
     for (const e of this.manager.preload.list()) for (const m of Object.values(e.spec)) if (m.kind === kind) out.add(m.channel);
     return out;
   }
@@ -245,6 +323,7 @@ export class MainFramework {
         throw new Error(`channel "${ch}" is not exposed to renderers`);
       }
       const caller = typeof req.caller === "string" && this.manager.has(req.caller) ? req.caller : "host";
+      if (mgmt && caller !== "host") throw new Error("plugins cannot call the management API");
       if (caller !== "host") this.permissions.assert(caller, "ipc", `invoke("${ch}")`);
       const value = await this.manager.ipc.invoke(ch, req.input, { caller, senderId });
       return { ok: true, value };
@@ -279,15 +358,61 @@ export class MainFramework {
     h(MGMT.logs, ({ id }) => this.logs.query(id ? { source: id } : {}).slice(-200));
     h(MGMT.diagnostics, ({ id }) => this.manager.diagnostics(id));
     h(MGMT.details, ({ id }) => this.details(id));
-    h(MGMT.search, async ({ query }) => {
-      const installed = new Map(this.manager.list().map((p) => [p.id, p.version]));
-      // The store is asked first; each entry is then compared with what is installed locally.
-      return (await this.installer.search(query)).map((e) => ({ ...e, installedVersion: installed.get(e.id) }));
+    h(MGMT.readme, async ({ id, locale }) => {
+      const text = (await this.details(id)).readme ?? "";
+      const to = String(locale || "en").split("-")[0]!.toLowerCase();
+      const from = (this.manager.manifest(id).language ?? detectLanguage(text))?.split("-")[0]?.toLowerCase();
+      if (!text || !from || from === to) return { text, translated: false, from };
+      if (!this.translator) return { text, translated: false, from, reason: "automatic translation is not enabled" };
+      try {
+        return { text: await translateMarkdown(text, to, from, this.translator, this.translations), translated: true, from, to, provider: this.translator.name };
+      } catch (e) {
+        return { text, translated: false, from, reason: errorMessage(e) };
+      }
     });
-    h(MGMT.updates, async () => (await this.installer.updates()).map((e) => ({ ...e, installedVersion: this.manager.has(e.id) ? this.manager.info(e.id).version : undefined })));
-    h(MGMT.install, async ({ entry }) => this.installAndLoad(entry));
-    h(MGMT.update, async ({ entry }) => this.installAndLoad(entry));
+    const installedMap = () => new Map(this.manager.list().map((p) => [p.id, { version: p.version, conflicts: p.conflicts }]));
+    const annotate = (e: RegistryEntry): RegistryEntry => {
+      const v = this.manager.has(e.id) ? this.manager.info(e.id).version : undefined;
+      return { ...e, installedVersion: v, updateAvailable: !!v && isValidVersion(v) && isValidVersion(e.version) && compareVersions(e.version, v) > 0 };
+    };
+    const entryById = async (id: string, version?: string): Promise<RegistryEntry> => {
+      const snap = await this.installer.catalog();
+      const e = version ? snap.all.find((x) => x.id === id && x.version === version) : snap.entries.find((x) => x.id === id);
+      if (!e) throw new Error(`"${id}" was not found in your stores`); // entries always come from the server-side catalog, never from the renderer
+      return e;
+    };
+    h(MGMT.search, async ({ query }) => (await this.installer.search(query)).map(annotate));
+    h(MGMT.catalog, async (q: CatalogQuery & { refresh?: boolean }) => {
+      const snap = await this.installer.catalog({ refresh: q?.refresh });
+      return { ...queryCatalog(snap.entries.map(annotate), q ?? {}), errors: snap.errors, conflicts: snap.conflicts, fetchedAt: snap.fetchedAt };
+    });
+    h(MGMT.updates, async () => (await this.installer.catalog()).entries.map(annotate).filter((e) => e.updateAvailable));
+    h(MGMT.analyze, async ({ id }) => {
+      const info = this.manager.info(id);
+      return info.root ? await this.installer.analyze(await entryById(id), info.root) : undefined;
+    });
+    h(MGMT.plan, async ({ id }) => this.planFor(await entryById(id), installedMap()));
+    h(MGMT.install, async ({ id, version }) => this.installWithPlan(await entryById(id, version), installedMap()));
+    h(MGMT.update, async ({ id, version }) => this.installWithPlan(await entryById(id, version), installedMap()));
+    h(MGMT.installPlan, async ({ id, version }) => this.installWithPlan(await entryById(id, version), installedMap()));
+    h(MGMT.feature, async ({ id, feature, enabled }) => (await this.manager.setFeature(id, feature, !!enabled), this.manager.info(id)));
+    h(MGMT.capabilities, () => this.manager.capabilities());
+    h(MGMT.capability, async ({ capability, id }) => (await this.manager.setCapabilityOwner(capability, id), this.manager.capabilities()));
+    h(MGMT.license, async ({ id, token }) => {
+      const pricing = this.manager.has(id) ? this.manager.manifest(id).pricing : (await entryById(id)).pricing;
+      if (token) {
+        const v = verifyLicenseToken(pricing?.publicKey, String(token), id);
+        if (!v.ok) throw new Error(v.reason);
+        this.licenses = { ...this.licenses, [id]: String(token) };
+      } else delete this.licenses[id];
+      await this.state.update({ licenses: this.licenses });
+      if (token && this.manager.has(id)) await this.manager.activate(id).catch(() => undefined);
+      return this.manager.has(id) ? this.manager.info(id) : { id, licensed: !!token };
+    });
     h(MGMT.uninstall, async ({ id }) => {
+      this.manager.assertRemovable(id); // system plugins and plugins others depend on are refused here, in the main process
+      const root = this.manager.info(id).root;
+      if (root && !path.resolve(root).startsWith(path.resolve(this.installer.dir) + path.sep)) throw new Error("this plugin ships with the application and cannot be uninstalled");
       await this.manager.unregister(id);
       await this.installer.uninstall(id);
       return list();
@@ -333,6 +458,9 @@ export class MainFramework {
       })(),
       readme,
       assetBase: url(id, "./"),
+      isSystem: this.manager.isSystem(id),
+      pricing: m.pricing,
+      releaseNotes: root ? await this.releaseNotes(root) : undefined,
     };
   }
 
@@ -342,13 +470,75 @@ export class MainFramework {
     return c;
   }
 
-  private async installAndLoad(entry: Parameters<PluginInstaller["install"]>[0]) {
-    const wasActive = this.manager.has(entry.id) && this.manager.info(entry.id).state === "ready";
-    if (this.manager.has(entry.id)) await this.manager.unregister(entry.id);
-    const r = await this.installer.install(entry);
+  /** updates/<version>.md of an installed plugin, newest first. */
+  private async releaseNotes(root: string): Promise<{ version: string; notes: string }[]> {
+    const dir = path.join(root, "updates");
+    const out: { version: string; notes: string }[] = [];
+    for (const f of (await fsp.readdir(dir).catch(() => [])).slice(0, 60)) {
+      const v = f.replace(/\.md$/i, "");
+      if (!/\.md$/i.test(f) || !isValidVersion(v)) continue;
+      const file = path.join(dir, f);
+      if ((await fsp.stat(file)).size <= 100_000) out.push({ version: v, notes: await fsp.readFile(file, "utf8") });
+    }
+    return out.sort((a, b) => compareVersions(b.version, a.version));
+  }
+
+  private licenseProblem(m: { id: string; name: string; pricing?: RegistryEntry["pricing"] }): string | undefined {
+    if (!m.pricing || m.pricing.model === "free") return undefined;
+    const token = this.licenses[m.id];
+    if (!token) return `"${m.name}" is a paid plugin: a license is required`;
+    const v = verifyLicenseToken(m.pricing.publicKey, token, m.id);
+    return v.ok ? undefined : `license problem: ${v.reason}`;
+  }
+
+  /** Dependencies, conflicts and licenses for installing `entry` — computed here, never trusted from the UI. */
+  async planFor(entry: RegistryEntry, installed: Map<string, { version: string; conflicts?: string[] }>): Promise<InstallPlan> {
+    const plan = await this.installer.plan(entry, installed);
+    for (const s of plan.steps) {
+      const p = s.entry.pricing;
+      if (p && p.model !== "free" && this.licenseProblem({ id: s.entry.id, name: s.entry.name, pricing: p })) {
+        plan.problems.push({ code: "license", plugin: s.entry.id, message: `"${s.entry.name}" is a paid plugin: enter a license key first${p.purchaseUrl ? ` (buy it at ${p.purchaseUrl})` : ""}` });
+      }
+    }
+    return { ...plan, ok: plan.problems.length === 0 };
+  }
+
+  /**
+   * Installs `entry` with every missing dependency as ONE transaction: files are swapped in only after everything was downloaded and
+   * verified; if any file step or any activation fails, all touched plugins go back to their previous version.
+   */
+  async installWithPlan(entry: RegistryEntry, installed: Map<string, { version: string; conflicts?: string[] }>) {
+    const plan = await this.planFor(entry, installed);
+    if (!plan.ok) throw new Error(`cannot install "${entry.name}": ${plan.problems.map((p) => p.message).join("; ")}`);
+    const steps = plan.steps;
+    const before = steps.map((s) => ({ id: s.entry.id, was: this.manager.has(s.entry.id) ? this.manager.info(s.entry.id) : undefined }));
+    for (const b of before) if (b.was?.isSystem && b.was.root && !path.resolve(b.was.root).startsWith(path.resolve(this.installer.dir) + path.sep)) throw new Error(`"${b.id}" is a system plugin shipped with the application and is updated with it`);
+    for (const b of before) if (this.manager.has(b.id)) await this.manager.unregister(b.id);
+    let results;
+    try {
+      results = await this.installer.installMany(steps.map((s) => s.entry));
+    } catch (e) {
+      await this.scan(); // files were restored by the installer: bring the previous versions back
+      for (const b of before) if (b.was?.state === "ready") await this.manager.activate(b.id).catch(() => undefined);
+      throw e;
+    }
     await this.scan();
-    if (this.manager.has(entry.id) && (wasActive || !r.previousVersion)) await this.manager.activate(entry.id).catch(() => undefined);
-    return r;
+    try {
+      for (const s of steps) {
+        const was = before.find((b) => b.id === s.entry.id)?.was;
+        if (this.manager.has(s.entry.id) && (!was || was.state === "ready")) await this.manager.activate(s.entry.id);
+      }
+    } catch (e) {
+      for (const r of [...results].reverse()) {
+        await this.manager.unregister(r.id).catch(() => undefined);
+        if (r.previousVersion) await this.installer.rollback(r.id, r.previousVersion).catch(() => undefined);
+        else await this.installer.uninstall(r.id).catch(() => undefined);
+      }
+      await this.scan();
+      for (const b of before) if (b.was?.state === "ready") await this.manager.activate(b.id).catch(() => undefined);
+      throw new Error(`installation was rolled back: ${(e as Error).message}`);
+    }
+    return results[results.length - 1]!;
   }
 
   /** Channels used by transports. */

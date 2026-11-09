@@ -5,6 +5,7 @@ import path from "node:path";
 import { validateManifest, type PluginManifest } from "../core/index.js";
 import { computeIntegrity, copyPluginRuntime, createTarGz, signManifest, type PluginDescriptor } from "../main/index.js";
 import { buildPlugin } from "./build.js";
+import { generateNotes, readNotes } from "./release-notes.js";
 
 export interface PackageResult {
   file: string;
@@ -22,6 +23,8 @@ export interface PackageResult {
 export async function packagePlugin(root: string, opts: { out?: string; signKey?: string; log?: (m: string) => void } = {}): Promise<PackageResult> {
   const log = opts.log ?? console.log;
   await buildPlugin(root, false, log);
+  const notes = await generateNotes(root); // updates/<version>.md (manual text is kept) — shipped inside the package
+  log(`  release notes: updates/${notes.version}.md${notes.created ? " (created: complete it by hand)" : ""}`);
   let raw = JSON.parse(await fs.readFile(path.join(root, "plugin.json"), "utf8")) as Record<string, unknown>;
   const v = validateManifest(raw);
   if (!v.manifest) throw new Error("invalid plugin.json: " + v.issues.map((i) => `${i.path}: ${i.message}`).join("; "));
@@ -43,6 +46,7 @@ export async function packagePlugin(root: string, opts: { out?: string; signKey?
     const descriptor: PluginDescriptor = {
       id: m.id, name: m.name, version: m.version, description: m.description,
       author: typeof m.author === "string" ? m.author : m.author?.name, permissions: m.permissions ?? [], file: path.basename(file), sha256,
+      dependencies: { ...m.dependencies, ...m.peerDependencies }, provides: m.provides, conflicts: m.conflicts, pricing: m.pricing, updates: await readNotes(root),
     };
     const descriptorFile = path.join(out, `${m.id}-${m.version}.fluxplugin.json`);
     await fs.writeFile(descriptorFile, JSON.stringify(descriptor, null, 2));

@@ -33,22 +33,36 @@ export class FsStorageBackend implements StorageBackend {
   }
 }
 
-/** Persists the list of disabled plugins and approved permissions. Updates are serialized (no lost writes). */
+export interface PersistedState {
+  disabled: string[];
+  approved: Record<string, string[]>;
+  /** Feature switches and capability owners chosen by the user. */
+  policy: { features: Record<string, Record<string, boolean>>; capabilities: Record<string, string> };
+  /** License tokens of paid plugins (pluginId → token). */
+  licenses: Record<string, string>;
+}
+
+/** Persists disabled plugins, approved permissions, user policy and licenses. Updates are serialized (no lost writes). */
 export class JsonStateFile {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly file: string) {}
 
-  async readAll(): Promise<{ disabled: string[]; approved: Record<string, string[]> }> {
+  async readAll(): Promise<PersistedState> {
     try {
       const j = JSON.parse(await fs.readFile(this.file, "utf8"));
-      return { disabled: Array.isArray(j.disabled) ? j.disabled : [], approved: j.approved && typeof j.approved === "object" ? j.approved : {} };
+      return {
+        disabled: Array.isArray(j.disabled) ? j.disabled : [],
+        approved: j.approved && typeof j.approved === "object" ? j.approved : {},
+        policy: { features: j.policy?.features ?? {}, capabilities: j.policy?.capabilities ?? {} },
+        licenses: j.licenses && typeof j.licenses === "object" ? j.licenses : {},
+      };
     } catch {
-      return { disabled: [], approved: {} };
+      return { disabled: [], approved: {}, policy: { features: {}, capabilities: {} }, licenses: {} };
     }
   }
 
   /** Merges `patch(current)` into the file. Concurrent calls run one after the other. */
-  update(patch: Partial<{ disabled: string[]; approved: Record<string, string[]> }> | ((cur: { disabled: string[]; approved: Record<string, string[]> }) => Partial<{ disabled: string[]; approved: Record<string, string[]> }>)): Promise<void> {
+  update(patch: Partial<PersistedState> | ((cur: PersistedState) => Partial<PersistedState>)): Promise<void> {
     const run = this.queue.then(async () => {
       const cur = await this.readAll();
       const p = typeof patch === "function" ? patch(cur) : patch;
