@@ -100,6 +100,12 @@ interface Grant {
 
 const SAFE_URL = /^(https?:|mailto:)/i;
 
+/** True when `target` is `root` or lies under it. Uses path.relative, so it is right for any OS (drive-letter case, separators). */
+function isInside(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === "" || (rel.split(path.sep)[0] !== ".." && !path.isAbsolute(rel));
+}
+
 /**
  * Enforces FluxAPI. Plugins never get raw paths: they get **file refs** (capabilities) created when the user picks a file in a native
  * dialog or the OS hands one over, and each ref only works for the plugin it was granted to. Every method checks the caller's permission.
@@ -143,8 +149,7 @@ export class DesktopService {
     if (typeof target === "string") {
       const abs = path.resolve(target);
       if (caller === "host") return abs;
-      const roots = (this.opts.allowedRoots ?? []).map((r) => path.resolve(r));
-      if (roots.some((r) => abs === r || abs.startsWith(r + path.sep))) return abs;
+      if ((this.opts.allowedRoots ?? []).some((r) => isInside(path.resolve(r), abs))) return abs;
     }
     throw new PermissionDeniedError(caller, mode === "read" ? "filesystem.read" : "filesystem.write", "a path (use the file dialogs to get a file reference)");
   }

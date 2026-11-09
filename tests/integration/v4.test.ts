@@ -10,6 +10,8 @@ import {
 } from "fluxplugin/main";
 
 let tmp: string;
+/** An absolute path of the CURRENT OS under the temp folder. Never hard-code "/x" or "C:\\x": Windows turns "/x" into "C:\\x". */
+const P = (...parts: string[]) => path.join(tmp, ...parts);
 beforeEach(async () => void (tmp = await fs.mkdtemp(path.join(os.tmpdir(), "flux-v4-"))));
 afterEach(async () => {
   vi.unstubAllGlobals();
@@ -18,8 +20,15 @@ afterEach(async () => {
 
 /* ------------------------------------------------------------------ FluxAPI */
 
+/** A Map keyed by resolved path: "a/../b" and "b" are the same file, on every OS. */
+class PathMap extends Map<string, Buffer> {
+  override get = (k: string) => super.get(path.resolve(k));
+  override set = (k: string, v: Buffer) => super.set(path.resolve(k), v);
+  override has = (k: string) => super.has(path.resolve(k));
+}
+
 function fakeBackend() {
-  const files = new Map<string, Buffer>();
+  const files = new PathMap();
   const log: string[] = [];
   const be: DesktopBackend & { files: Map<string, Buffer>; log: string[]; openPick: string[]; savePick?: string; clip: string } = {
     files, log, openPick: [], clip: "",
@@ -61,8 +70,8 @@ const call = (fw: MainFramework, channel: string, input?: unknown, caller?: stri
 describe("FluxAPI · files are capabilities, not paths", () => {
   it("a file picked in the native dialog is readable by that plugin only; other plugins and raw paths are refused", async () => {
     const be = fakeBackend();
-    be.files.set("/docs/a.md", Buffer.from("# hello"));
-    be.openPick = ["/docs/a.md"];
+    be.files.set(P("docs", "a.md"), Buffer.from("# hello"));
+    be.openPick = [P("docs", "a.md")];
     const fw = await framework(be, { "a.p": ["filesystem.read"], "b.p": ["filesystem.read"], "c.p": [] });
     const open = (await call(fw, API_CHANNELS.open, {}, "a.p")) as { ok: true; value: { id: string; name: string; ext: string; mime: string; size: number }[] };
     const ref = open.value[0]!;
@@ -70,29 +79,29 @@ describe("FluxAPI · files are capabilities, not paths", () => {
     expect(await call(fw, API_CHANNELS.read, { ref }, "a.p")).toMatchObject({ ok: true, value: "# hello" });
     expect(await call(fw, API_CHANNELS.read, { ref, as: "base64" }, "a.p")).toMatchObject({ value: Buffer.from("# hello").toString("base64") });
     expect(await call(fw, API_CHANNELS.read, { ref }, "b.p")).toMatchObject({ ok: false, error: { message: expect.stringMatching(/not shared with this plugin/) } }); // same permission, not its file
-    expect(await call(fw, API_CHANNELS.read, { ref: "/docs/a.md" }, "a.p")).toMatchObject({ ok: false, error: { message: expect.stringMatching(/file dialogs/) } }); // no raw paths
+    expect(await call(fw, API_CHANNELS.read, { ref: P("docs", "a.md") }, "a.p")).toMatchObject({ ok: false, error: { message: expect.stringMatching(/file dialogs/) } }); // no raw paths
     expect(await call(fw, API_CHANNELS.open, {}, "c.p")).toMatchObject({ ok: false, error: { code: "FLUX_PERMISSION_DENIED" } });
-    expect(await call(fw, API_CHANNELS.read, { ref: "/docs/a.md" }, undefined)).toMatchObject({ ok: true, value: "# hello" }); // the host may use paths
+    expect(await call(fw, API_CHANNELS.read, { ref: P("docs", "a.md") }, undefined)).toMatchObject({ ok: true, value: "# hello" }); // the host may use paths
     await fw.stop();
   });
 
   it("save dialogs give write access; a read-only ref cannot be written; size caps and allowed roots apply", async () => {
     const be = fakeBackend();
-    be.files.set("/in.txt", Buffer.from("x"));
-    be.openPick = ["/in.txt"];
-    be.savePick = "/out/copy.txt";
-    const fw = await framework(be, { "w.p": ["filesystem.read", "filesystem.write"] }, { desktop: { backend: be, maxBytes: 10, allowedRoots: ["/sandbox"] } });
+    be.files.set(P("in.txt"), Buffer.from("x"));
+    be.openPick = [P("in.txt")];
+    be.savePick = P("out", "copy.txt");
+    const fw = await framework(be, { "w.p": ["filesystem.read", "filesystem.write"] }, { desktop: { backend: be, maxBytes: 10, allowedRoots: [P("sandbox")] } });
     const [inRef] = ((await call(fw, API_CHANNELS.open, {}, "w.p")) as { value: { id: string }[] }).value;
     expect(await call(fw, API_CHANNELS.write, { ref: inRef, data: "no" }, "w.p")).toMatchObject({ ok: false, error: { message: expect.stringMatching(/does not allow write/) } });
     const out = ((await call(fw, API_CHANNELS.save, { defaultName: "copy.txt" }, "w.p")) as { value: { id: string; name: string } }).value;
     expect(out.name).toBe("copy.txt");
     expect(await call(fw, API_CHANNELS.write, { ref: out, data: "saved" }, "w.p")).toMatchObject({ ok: true });
-    expect(be.files.get("/out/copy.txt")!.toString()).toBe("saved");
+    expect(be.files.get(P("out", "copy.txt"))!.toString()).toBe("saved");
     expect(await call(fw, API_CHANNELS.write, { ref: out, data: "this is longer than ten bytes" }, "w.p")).toMatchObject({ ok: false, error: { message: expect.stringMatching(/too large/) } });
     expect(await call(fw, API_CHANNELS.write, { ref: out, data: Buffer.from("bin").toString("base64"), as: "base64" }, "w.p")).toMatchObject({ ok: true });
-    expect(be.files.get("/out/copy.txt")!.toString()).toBe("bin");
-    expect(await call(fw, API_CHANNELS.write, { ref: "/sandbox/x.txt", data: "ok" }, "w.p")).toMatchObject({ ok: true }); // allowed root
-    expect(await call(fw, API_CHANNELS.write, { ref: "/sandbox/../etc/passwd", data: "no" }, "w.p")).toMatchObject({ ok: false }); // traversal out of the root
+    expect(be.files.get(P("out", "copy.txt"))!.toString()).toBe("bin");
+    expect(await call(fw, API_CHANNELS.write, { ref: P("sandbox", "x.txt"), data: "ok" }, "w.p")).toMatchObject({ ok: true }); // allowed root
+    expect(await call(fw, API_CHANNELS.write, { ref: P("sandbox", "..", "etc", "passwd"), data: "no" }, "w.p")).toMatchObject({ ok: false }); // traversal out of the root
     be.savePick = undefined;
     expect(((await call(fw, API_CHANNELS.save, {}, "w.p")) as { value: unknown }).value).toBeNull(); // cancelled dialog
     await fw.stop();
@@ -125,12 +134,12 @@ describe("FluxAPI · files are capabilities, not paths", () => {
 
   it("files the OS opens are announced, queued for the UI, and only readable by a plugin after the host hands them over", async () => {
     const be = fakeBackend();
-    be.files.set("/Users/me/notes.md", Buffer.from("note"));
+    be.files.set(P("Users", "me", "notes.md"), Buffer.from("note"));
     const fw = await framework(be, { "ed.p": ["filesystem.read"] });
     const bcast = vi.spyOn(fw, "broadcast");
-    const ref = (await fw.desktop!.receive("/Users/me/notes.md", fw, "os"))!;
+    const ref = (await fw.desktop!.receive(P("Users", "me", "notes.md"), fw, "os"))!;
     expect(bcast).toHaveBeenCalledWith(FILE_OPEN_EVENT, { ref, source: "os" });
-    expect(await fw.desktop!.receive("/nope.md", fw)).toBeUndefined(); // not a file
+    expect(await fw.desktop!.receive(P("nope.md"), fw)).toBeUndefined(); // not a file
     expect(await call(fw, API_CHANNELS.read, { ref }, "ed.p")).toMatchObject({ ok: false }); // not handed over yet
     expect(await call(fw, API_CHANNELS.handOver, { id: ref.id, pluginId: "ed.p" }, "ed.p")).toMatchObject({ ok: false }); // a plugin cannot hand files to itself
     expect(await call(fw, API_CHANNELS.handOver, { id: ref.id, pluginId: "ed.p" })).toMatchObject({ ok: true });

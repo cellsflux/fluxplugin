@@ -271,7 +271,7 @@ describe("files opened by the OS reach the plugin handlers", () => {
     await click("[data-testid=close-modal]");
     expect(q("[data-testid=file-modal]")).toBeNull();
     await open(ref("again.md", "md", "f_2"));
-    q("[data-testid=open-with] input[type=checkbox]")!.click();
+    await act(async () => void q("[data-testid=open-with] input[type=checkbox]")!.click());
     await click("[data-testid=open-with-edit]");
     expect(window.location.hash).toBe("#/editor?file=f_2");
     expect(localStorage.getItem("fluxplugin.openwith.md")).toBe("edit");
