@@ -355,7 +355,7 @@ describe("13-16 · store: no duplicates, pagination, errors", () => {
     await fw.start();
     const r = (await call(fw, "flux.plugins.catalog", {})) as { value: { items: CatalogEntry[]; errors: { source: string; message: string }[] } };
     expect(r.value.items.map((i) => i.id)).toEqual(["ok.p"]);
-    expect(r.value.errors).toEqual([{ source: "bad", message: "ENOTFOUND plugins.example.com" }]);
+    expect(r.value.errors).toEqual([{ source: "bad", message: "the server cannot be reached (ENOTFOUND)" }]); // the host name never reaches the UI
     const { fw: fw2 } = await mk({}, [bad]);
     await fw2.start();
     expect(await call(fw2, "flux.plugins.search", {})).toMatchObject({ ok: false, error: { message: expect.stringMatching(/ENOTFOUND/) } });
@@ -380,7 +380,10 @@ describe("paid and free plugins", () => {
     const { fw } = await mk({}, [new LocalRegistry(store(), "s")]);
     await fw.start();
     expect(await call(fw, "flux.plugins.install", { id: "free.p" })).toMatchObject({ ok: true });
-    expect(await call(fw, "flux.plugins.install", { id: "paid.p" })).toMatchObject({ ok: false, error: { message: expect.stringMatching(/paid plugin.*license.*shop\.example/) } });
+    expect(await call(fw, "flux.plugins.install", { id: "paid.p" })).toMatchObject({ ok: false, error: { message: expect.stringMatching(/paid plugin.*license.*Buy button/) } });
+    const raw = JSON.stringify(await call(fw, "flux.plugins.catalog", {}));
+    expect(raw).not.toContain("shop.example"); // purchase URL and public key stay in the main process
+    expect(raw).not.toContain(keys.publicKey);
     const filtered = (await call(fw, "flux.plugins.catalog", { price: "paid" })) as { value: { items: CatalogEntry[] } };
     expect(filtered.value.items.map((i) => i.id)).toEqual(["paid.p"]);
     const wrongPlugin = createLicense(keys.privateKey, { plugin: "other.p" });

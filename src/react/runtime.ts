@@ -64,6 +64,10 @@ export class PluginsClient {
   configReset = <T = Record<string, unknown>>(id: string) => this.call<T>(MGMT.configReset, { id });
   configSchema = (id: string) => this.call<import("../core/index.js").SchemaDescription | null>(MGMT.configSchema, { id });
   logs = (id?: string) => this.call<import("../core/index.js").LogEntry[]>(MGMT.logs, { id });
+  /** Description, README and release notes of a plugin (installed or in a store) translated into `locale`. */
+  translate = (id: string, locale: string) => this.call<{ from?: string; to: string; translated: boolean; provider?: string; reason?: string; readme: string; description?: string; notes: { version: string; notes: string }[] }>(MGMT.translate, { id, locale });
+  /** Opens one of the plugin's links ("website", "purchase", or the label the author gave) in the system browser. The URL never reaches the page. */
+  openLink = (id: string, label: string) => this.call<boolean>(MGMT.openLink, { id, label });
   readme = (id: string, locale: string) => this.call<{ text: string; translated: boolean; from?: string; to?: string; provider?: string; reason?: string }>(MGMT.readme, { id, locale });
   details = (id: string) => this.call<PluginDetails>(MGMT.details, { id });
   diagnostics = (id: string) => this.call<{ info: PluginInfo; logs: import("../core/index.js").LogEntry[]; contributions: Record<string, number> }>(MGMT.diagnostics, { id });

@@ -4,6 +4,14 @@ import type { RegistryEntryLike } from "./protocol.js";
 /** One plugin as listed by a store. The same shape is used by registries (main) and by the UI. */
 export type CatalogEntry = RegistryEntryLike;
 
+/** The name/description of an entry in `locale` (exact match, then the base language, then the original text). */
+export function localize(e: { name: string; description?: string; translations?: Record<string, { name?: string; description?: string }> }, locale?: string): { name: string; description?: string } {
+  const tr = e.translations;
+  const l = (locale ?? "").toLowerCase();
+  const hit = tr && (tr[locale ?? ""] ?? tr[l] ?? tr[l.split("-")[0]!]);
+  return { name: hit?.name ?? e.name, description: hit?.description ?? e.description };
+}
+
 export const isPaid = (e: CatalogEntry): boolean => !!e.pricing && e.pricing.model !== "free";
 
 export interface CatalogConflict {
@@ -50,6 +58,8 @@ export function dedupeEntries(raw: CatalogEntry[], sourceOrder: string[] = []): 
 
 export interface CatalogQuery {
   q?: string;
+  /** Language of the user: the search also matches the translated name and description. */
+  locale?: string;
   category?: string;
   price?: "all" | "free" | "paid";
   sort?: "name" | "updated" | "popular";
@@ -65,13 +75,15 @@ export interface Page<T> {
   pages: number;
 }
 
-export function filterEntries(entries: CatalogEntry[], q: Pick<CatalogQuery, "q" | "category" | "price">): CatalogEntry[] {
+export function filterEntries(entries: CatalogEntry[], q: Pick<CatalogQuery, "q" | "category" | "price" | "locale">): CatalogEntry[] {
   const text = (q.q ?? "").trim().toLowerCase();
   return entries.filter((e) => {
     if (q.category && !(e.categories ?? []).includes(q.category)) return false;
     if (q.price === "free" && isPaid(e)) return false;
     if (q.price === "paid" && !isPaid(e)) return false;
-    return !text || `${e.id} ${e.name} ${e.description ?? ""} ${e.author ?? ""} ${(e.keywords ?? []).join(" ")}`.toLowerCase().includes(text);
+    if (!text) return true;
+    const loc = localize(e, q.locale);
+    return `${e.id} ${e.name} ${e.description ?? ""} ${loc.name} ${loc.description ?? ""} ${e.author ?? ""} ${(e.keywords ?? []).join(" ")}`.toLowerCase().includes(text);
   });
 }
 

@@ -328,6 +328,7 @@ export class PluginManager {
       provides: m.provides ?? [],
       conflicts: m.conflicts ?? [],
       pricing: m.pricing,
+      translations: m.translations,
       features: this.featuresOf(id),
       dependencies: { ...m.dependencies, ...m.peerDependencies, ...m.optionalDependencies },
       dependents: dependentsOf(graph, id),

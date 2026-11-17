@@ -12,9 +12,9 @@ import { HttpRegistry, LocalRegistry, type PluginRegistry } from "./registry.js"
  */
 export type StoreSpec =
   | { type: "github"; topic?: string; repo?: string; ref?: string; indexPath?: string; name?: string }
-  | { type: "http"; url: string; headers?: Record<string, string> }
-  | { type: "json"; url: string; headers?: Record<string, string> }
-  | { type: "local"; path: string };
+  | { type: "http"; url: string; headers?: Record<string, string>; name?: string }
+  | { type: "json"; url: string; headers?: Record<string, string>; name?: string }
+  | { type: "local"; path: string; name?: string };
 
 export const DEFAULT_STORE: StoreSpec = { type: "github", topic: DEFAULT_TOPIC };
 
@@ -22,7 +22,8 @@ export const DEFAULT_STORE: StoreSpec = { type: "github", topic: DEFAULT_TOPIC }
 export function createRegistries(specs: StoreSpec[] = [DEFAULT_STORE], opts: { env?: Record<string, string | undefined>; baseDir?: string; fetchImpl?: typeof fetch } = {}): PluginRegistry[] {
   const env = opts.env ?? process.env;
   const token = env["GITHUB_TOKEN"] ?? env["GH_TOKEN"];
-  return specs.map((s) => {
+  return specs.map((s, i) => {
+    const reg = ((): PluginRegistry => {
     switch (s.type) {
       case "github":
         return new GitHubRegistry({ ...s, token, fetchImpl: opts.fetchImpl });
@@ -34,5 +35,9 @@ export function createRegistries(specs: StoreSpec[] = [DEFAULT_STORE], opts: { e
       default:
         throw new Error(`unknown store type: ${JSON.stringify(s)}`);
     }
+    })();
+    // The label is what users see; the URL/path (reg.name) never leaves the main process.
+    reg.label = (s as { name?: string }).name ?? `Store ${i + 1}`;
+    return reg;
   });
 }

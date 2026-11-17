@@ -1,33 +1,10 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { s } from "../core/index.js";
 import { useExtensionItems, useExtensionItemsWithOwner, usePluginFramework } from "./components.js";
+import { I18nContext, PSEUDO, decorate, interpolate, type LanguageDef, type MessagesDef, type TFunction } from "./i18n-core.js";
 import type { RendererFramework } from "./runtime.js";
 
-export interface LanguageDef {
-  code: string;
-  label: string;
-  nativeLabel?: string;
-  rtl?: boolean;
-}
-export interface MessagesDef {
-  locale: string;
-  messages: Record<string, string>;
-}
-
-export type TFunction = (key: string, fallback?: string, params?: Record<string, string | number>) => string;
-
-interface I18nCtx {
-  locale: string;
-  setLocale(code: string): void;
-  languages: LanguageDef[];
-  t: TFunction;
-  /** Raw lookup of a (possibly plugin-prefixed) key in the active language. */
-  lookup(key: string): string | undefined;
-}
-
-const interpolate = (text: string, params?: Record<string, string | number>): string => (params ? text.replace(/\{(\w+)\}/g, (m, k: string) => (k in params ? String(params[k]) : m)) : text);
-const fallbackCtx: I18nCtx = { locale: "en", setLocale: () => {}, languages: [{ code: "en", label: "English" }], t: (_k, fb, p) => interpolate(fb ?? _k, p), lookup: () => undefined };
-const Ctx = createContext<I18nCtx>(fallbackCtx);
+export * from "./i18n-core.js";
 
 /** Declares the extension points plugins use to add languages and translations. Called by `declareHostPoints`. */
 export function declareI18nPoints(framework: RendererFramework): void {
@@ -67,6 +44,7 @@ export function I18nProvider({ children, defaultLocale = "en", storageKey = "flu
   // fr-CA → fr when only "fr" is installed; unknown languages fall back to the default.
   const active = useMemo(() => {
     const codes = languages.map((l) => l.code);
+    if (locale === PSEUDO) return PSEUDO;
     return codes.includes(locale) ? locale : (codes.find((c) => locale.toLowerCase().startsWith(c.toLowerCase() + "-")) ?? defaultLocale);
   }, [locale, languages, defaultLocale]);
   // System plugins (and the host) provide the shared vocabulary under plain keys. Any other plugin's keys are stored under
@@ -83,7 +61,7 @@ export function I18nProvider({ children, defaultLocale = "en", storageKey = "flu
   }, [bundles, fw]);
   // fr-CA finds "fr" automatically, so a plugin only has to ship its base language to match the system language.
   const lookup = useCallback((key: string) => table.get(active)?.[key] ?? table.get(active.split("-")[0]!)?.[key], [table, active]);
-  const t = useCallback<TFunction>((key, fb, params) => interpolate(lookup(key) ?? fb ?? key, params), [lookup]);
+  const t = useCallback<TFunction>((key, fb, params) => decorate(interpolate(lookup(key) ?? fb ?? key, params), active), [lookup, active]);
   const setLocale = useCallback((code: string) => {
     setLocaleState(code);
     try {
@@ -97,17 +75,5 @@ export function I18nProvider({ children, defaultLocale = "en", storageKey = "flu
     document.documentElement.dir = languages.find((l) => l.code === active)?.rtl ? "rtl" : "ltr";
   }, [active, languages]);
   const value = useMemo(() => ({ locale: active, setLocale, languages, t, lookup }), [active, setLocale, languages, t, lookup]);
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
-
-export const useI18n = (): I18nCtx => useContext(Ctx);
-export const useT = (): TFunction => useContext(Ctx).t;
-
-/**
- * Translations for one plugin: looks up "<pluginId>:<key>" first (its own messages, prefixed automatically), then the system
- * vocabulary (already translated by the language plugins), then the fallback.
- */
-export function usePluginT(pluginId: string): TFunction {
-  const { lookup } = useContext(Ctx);
-  return useCallback<TFunction>((key, fb, params) => interpolate(lookup(`${pluginId}:${key}`) ?? lookup(key) ?? fb ?? key, params), [lookup, pluginId]);
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

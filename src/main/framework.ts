@@ -30,6 +30,7 @@ import { FsStorageBackend, JsonStateFile } from "./fs-storage.js";
 import { PluginInstaller, type PluginRegistry, type RegistryEntry } from "./registry.js";
 import { createRegistries, type StoreSpec } from "./stores.js";
 import { verifyLicenseToken } from "./security.js";
+import { assetToken, publicEntry, redactMessage } from "./redact.js";
 import { AppUpdater, type UpdateSource } from "./updater.js";
 import { TranslationCache, createTranslator, detectLanguage, translateMarkdown, type TranslateConfig, type Translator } from "./translate.js";
 import { DesktopService, registerDesktopApi, type DesktopBackend, type DesktopOptions } from "./desktop.js";
@@ -143,14 +144,22 @@ export class MainFramework {
     this.manager.notifications.onPush((n) => this.broadcast("flux.notification", n));
     if (options.updates) {
       const u = options.updates;
-      this.updater = new AppUpdater({ source: u.source, dir: u.dir, currentVersion: u.currentVersion, payloadDir: u.payloadDir, hostVersion: u.hostVersion, publicKey: u.publicKey, onState: (s) => this.broadcast("flux.update.state", s) });
+      this.updater = new AppUpdater({ source: u.source, dir: u.dir, currentVersion: u.currentVersion, payloadDir: u.payloadDir, hostVersion: u.hostVersion, publicKey: u.publicKey, onState: (s) => this.broadcast("flux.update.state", { ...s, error: s.error && redactMessage(s.error) }) });
       const up = this.updater;
       const ipc = this.manager.ipc;
-      ipc.handle("flux.update.state", () => up.state, "host", {});
+      ipc.handle("flux.update.state", () => ({ ...up.state, error: up.state.error && redactMessage(up.state.error) }), "host", {});
       ipc.handle("flux.update.check", async () => { const s = await up.check(); if (s.status === "available" && u.autoDownload) void up.download(); return s; }, "host", {});
       ipc.handle("flux.update.download", () => (void up.download(), up.state), "host", {});
       ipc.handle("flux.update.cancel", () => (up.cancel(), up.state), "host", {});
-      ipc.handle("flux.update.releases", () => up.releases(), "host", {});
+      let lastReleases: import("../core/index.js").ReleaseEntry[] = [];
+      // The renderer learns which installers exist (platform names), never where they are downloaded from.
+      ipc.handle("flux.update.releases", async () => ((lastReleases = await up.releases()), lastReleases.map((r) => ({ ...r, installers: r.installers && Object.fromEntries(Object.keys(r.installers).map((k) => [k, ""])) }))), "host", {});
+      ipc.handle("flux.update.openInstaller", async (i: { version: string; platform: string }) => {
+        const url = lastReleases.find((r) => r.version === i?.version)?.installers?.[i?.platform];
+        if (!url || !/^https?:\/\//.test(url)) throw new Error("this installer is not available");
+        await this.openExternal(url);
+        return true;
+      }, "host", {});
       ipc.handle("flux.update.restart", () => { up.apply(); u.restart?.(); return true; }, "host", {});
     }
     this.translator = createTranslator(options.translate);
@@ -160,6 +169,68 @@ export class MainFramework {
       this.desktop = new DesktopService(options.desktop.backend, this.permissions, options.desktop);
       registerDesktopApi(this, this.desktop);
     }
+  }
+  /** Translates everything shown on a plugin page (description, README, release notes) into `locale`; nothing is sent unless a translator is configured. */
+  private async translateFor(id: string, locale: string, entryById: (id: string) => Promise<RegistryEntry>) {
+    const to = locale.split("-")[0]!.toLowerCase();
+    let readme = "";
+    let description: string | undefined;
+    let notes: { version: string; notes: string }[] = [];
+    let declared: string | undefined;
+    if (this.manager.has(id)) {
+      const d = await this.details(id);
+      readme = d.readme ?? "";
+      description = d.description;
+      notes = d.releaseNotes ?? [];
+      declared = this.manager.manifest(id).language;
+    } else {
+      const e = await entryById(id);
+      readme = e.readme ?? "";
+      description = e.description;
+      notes = e.updates ?? [];
+    }
+    const from = (declared ?? detectLanguage(readme || description || ""))?.split("-")[0]?.toLowerCase();
+    const base = { from, to, translated: false, readme, description, notes, provider: undefined as string | undefined, reason: undefined as string | undefined };
+    if (!from || from === to) return base;
+    if (!this.translator) return { ...base, reason: "automatic translation is not enabled" };
+    try {
+      const tr = this.translator;
+      const tm = (s: string) => translateMarkdown(s, to, from, tr, this.translations);
+      return { ...base, translated: true, provider: tr.name, readme: readme ? await tm(readme) : "", description: description ? await tm(description) : description, notes: await Promise.all(notes.map(async (n) => ({ version: n.version, notes: await tm(n.notes) }))) };
+    } catch (e) {
+      return { ...base, reason: redactMessage(errorMessage(e)) };
+    }
+  }
+
+  private storeAssets = new Map<string, string>();
+  /** Remote image → opaque local URL; the real URL stays in the main process. */
+  storeAssetUrl(url: string): string {
+    if (!/^https?:\/\//i.test(url)) return url;
+    const token = assetToken(url);
+    if (this.storeAssets.size > 5000) this.storeAssets.clear();
+    this.storeAssets.set(token, url);
+    return (this.options.assetUrl ?? ((id, rel) => `fluxplugin://${id}/${rel}`))("_store", token);
+  }
+  /** Serves a relayed remote asset (images, media, fonts only; size and time limited). */
+  async serveStoreAsset(token: string): Promise<{ status: number; headers: Record<string, string>; body?: Buffer }> {
+    const url = this.storeAssets.get(token);
+    if (!url) return { status: 404, headers: {} };
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      const type = r.headers.get("content-type") ?? "application/octet-stream";
+      if (!r.ok || (!/^(image|video|audio|font)\//i.test(type) && !/svg|octet-stream/i.test(type))) return { status: 404, headers: {} };
+      const body = Buffer.from(await r.arrayBuffer());
+      if (body.length > 25_000_000) return { status: 413, headers: {} };
+      return { status: 200, headers: { "content-type": type, "cache-control": "private, max-age=3600" }, body };
+    } catch {
+      return { status: 502, headers: {} };
+    }
+  }
+  /** Opens a link in the system browser. The URL is looked up here; the renderer only names it ("website", "Docs", "purchase"). */
+  async openExternal(url: string): Promise<void> {
+    if (!/^(https?:|mailto:)/i.test(url)) throw new Error("only http(s) and mailto links can be opened");
+    if (!this.desktop) throw new Error("opening links is not available in this application");
+    await this.desktop.backend.openExternal(url);
   }
   /** Application updater (present when `updates` is configured). */
   updater?: AppUpdater;
@@ -302,7 +373,7 @@ export class MainFramework {
   private exposedChannels(kind: "invoke" | "send"): Set<string> {
     const out = new Set<string>(this.options.allowedRendererChannels ?? []);
     if (this.desktop) for (const c of Object.values(API_CHANNELS)) out.add(c);
-    if (this.updater) for (const c of ["state", "check", "download", "cancel", "releases", "restart"]) out.add(`flux.update.${c}`);
+    if (this.updater) for (const c of ["state", "check", "download", "cancel", "releases", "restart", "openInstaller"]) out.add(`flux.update.${c}`);
     out.add("flux.app.confirmClose").add("flux.app.closeAck");
     for (const e of this.manager.preload.list()) for (const m of Object.values(e.spec)) if (m.kind === kind) out.add(m.channel);
     return out;
@@ -328,7 +399,8 @@ export class MainFramework {
       const value = await this.manager.ipc.invoke(ch, req.input, { caller, senderId });
       return { ok: true, value };
     } catch (e) {
-      return { ok: false, error: serializeError(e) };
+      const se = serializeError(e);
+      return { ok: false, error: { ...se, message: redactMessage(se.message) } };
     }
   }
 
@@ -357,7 +429,31 @@ export class MainFramework {
     h(MGMT.configSchema, ({ id }) => this.manager.getConfig(id)?.describe() ?? null);
     h(MGMT.logs, ({ id }) => this.logs.query(id ? { source: id } : {}).slice(-200));
     h(MGMT.diagnostics, ({ id }) => this.manager.diagnostics(id));
-    h(MGMT.details, ({ id }) => this.details(id));
+    h(MGMT.details, async ({ id }) => {
+      const d = await this.details(id);
+      return { ...d, linkLabels: [...Object.keys(d.links ?? {}), ...(d.homepage ? ["website"] : [])], links: {}, homepage: undefined };
+    });
+    h(MGMT.openLink, async ({ id, label }) => {
+      let links: Record<string, string> = {};
+      let homepage: string | undefined;
+      let purchase: string | undefined;
+      if (this.manager.has(id)) {
+        const d = await this.details(id);
+        links = d.links ?? {};
+        homepage = d.homepage;
+        purchase = this.manager.manifest(id).pricing?.purchaseUrl;
+      } else {
+        const e = await entryById(id);
+        links = e.links ?? {};
+        homepage = e.homepage;
+        purchase = e.pricing?.purchaseUrl;
+      }
+      const url = label === "website" ? homepage : label === "purchase" ? purchase : links[label];
+      if (!url) throw new Error("this link is not available");
+      await this.openExternal(url);
+      return true;
+    });
+    h(MGMT.translate, async ({ id, locale }) => this.translateFor(id, String(locale || "en"), entryById));
     h(MGMT.readme, async ({ id, locale }) => {
       const text = (await this.details(id)).readme ?? "";
       const to = String(locale || "en").split("-")[0]!.toLowerCase();
@@ -371,9 +467,10 @@ export class MainFramework {
       }
     });
     const installedMap = () => new Map(this.manager.list().map((p) => [p.id, { version: p.version, conflicts: p.conflicts }]));
+    const labelOf = (source: string) => this.installer.labelOf(source);
     const annotate = (e: RegistryEntry): RegistryEntry => {
       const v = this.manager.has(e.id) ? this.manager.info(e.id).version : undefined;
-      return { ...e, installedVersion: v, updateAvailable: !!v && isValidVersion(v) && isValidVersion(e.version) && compareVersions(e.version, v) > 0 };
+      return publicEntry({ ...e, installedVersion: v, updateAvailable: !!v && isValidVersion(v) && isValidVersion(e.version) && compareVersions(e.version, v) > 0 }, { label: labelOf, asset: (u) => this.storeAssetUrl(u) });
     };
     const entryById = async (id: string, version?: string): Promise<RegistryEntry> => {
       const snap = await this.installer.catalog();
@@ -384,7 +481,12 @@ export class MainFramework {
     h(MGMT.search, async ({ query }) => (await this.installer.search(query)).map(annotate));
     h(MGMT.catalog, async (q: CatalogQuery & { refresh?: boolean }) => {
       const snap = await this.installer.catalog({ refresh: q?.refresh });
-      return { ...queryCatalog(snap.entries.map(annotate), q ?? {}), errors: snap.errors, conflicts: snap.conflicts, fetchedAt: snap.fetchedAt };
+      return {
+        ...queryCatalog(snap.entries.map(annotate), q ?? {}),
+        errors: snap.errors.map((x) => ({ source: labelOf(x.source), message: redactMessage(x.message) })),
+        conflicts: snap.conflicts.map((c) => ({ ...c, sources: c.sources.map(labelOf) })),
+        fetchedAt: snap.fetchedAt,
+      };
     });
     h(MGMT.updates, async () => (await this.installer.catalog()).entries.map(annotate).filter((e) => e.updateAvailable));
     h(MGMT.analyze, async ({ id }) => {
@@ -497,7 +599,7 @@ export class MainFramework {
     for (const s of plan.steps) {
       const p = s.entry.pricing;
       if (p && p.model !== "free" && this.licenseProblem({ id: s.entry.id, name: s.entry.name, pricing: p })) {
-        plan.problems.push({ code: "license", plugin: s.entry.id, message: `"${s.entry.name}" is a paid plugin: enter a license key first${p.purchaseUrl ? ` (buy it at ${p.purchaseUrl})` : ""}` });
+        plan.problems.push({ code: "license", plugin: s.entry.id, message: `"${s.entry.name}" is a paid plugin: enter a license key first${p.purchaseUrl ? " (use the Buy button to get one)" : ""}` });
       }
     }
     return { ...plan, ok: plan.problems.length === 0 };

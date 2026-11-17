@@ -77,6 +77,8 @@ export const MGMT = {
   diagnostics: "flux.plugins.diagnostics",
   details: "flux.plugins.details",
   catalog: "flux.plugins.catalog",
+  translate: "flux.plugins.translate",
+  openLink: "flux.plugins.openLink",
   readme: "flux.plugins.readme",
   plan: "flux.plugins.plan",
   installPlan: "flux.plugins.installPlan",
@@ -131,6 +133,10 @@ export interface RegistryEntryLike {
   conflict?: string[];
   /** True when the catalog has a newer version than the installed one. */
   updateAvailable?: boolean;
+  /** Translated name/description per language. */
+  translations?: Record<string, { name?: string; description?: string }>;
+  /** Labels of the author's links (the URLs themselves never reach the renderer: they are opened by the main process). */
+  linkLabels?: string[];
 }
 
 export interface Pricing {
@@ -162,6 +168,8 @@ export interface PluginDetails {
   video?: import("./manifest.js").VideoInfo;
   isSystem?: boolean;
   pricing?: Pricing;
+  translations?: Record<string, { name?: string; description?: string }>;
+  linkLabels?: string[];
   /** Release notes of the installed versions (updates/*.md), newest first. */
   releaseNotes?: { version: string; notes: string }[];
   /** Base URL of the plugin's files (to resolve relative images/videos). */

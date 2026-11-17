@@ -27,6 +27,7 @@ export const BUILTIN_PERMISSIONS = [
   "shell",
   "camera",
   "shortcuts",
+  "override",
 ] as const;
 export type BuiltinPermission = (typeof BUILTIN_PERMISSIONS)[number];
 export type Permission = BuiltinPermission | `x.${string}`;
@@ -60,6 +61,11 @@ export const manifestSchema = s.object({
   screenshots: s.array(s.string()).default([]),
   /** Language of README.md (BCP-47, e.g. "en"). Used to decide whether an automatic translation is needed. */
   language: s.string().optional(),
+  /**
+   * Translated name/description per language (`{ "fr": { "name": "Notes", "description": "…" } }`). Used by the plugin manager and the store, and
+   * searched in the user's language. `fr-CA` falls back to `fr`, then to the base text.
+   */
+  translations: s.record(s.object({ name: s.string().optional(), description: s.string().optional() })).optional(),
   /** Detailed description as Markdown (default: ./README.md). Rendered safely: no raw HTML. */
   readme: s.string().optional(),
   /** Explanation video (https URL; YouTube and Vimeo are embedded, other hosts become a link). */

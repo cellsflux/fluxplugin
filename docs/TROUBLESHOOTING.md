@@ -33,3 +33,15 @@ folder outside the app, run `fluxplugin dev` there. Host changes in `src/app/mai
   and the latest release contains both the `.tgz` and the `.fluxplugin.json` files (`fluxplugin publish` creates them).
 * **"version X is already published"** — bump `version` in `plugin.json`; releases are immutable.
 * **"downloaded package does not match the published checksum"** — the file changed after publishing; publish a new version.
+
+## `Cannot find module '…\fluxplugin\dist\cli.js'` (or "has not been built yet")
+
+Your app depends on a **local copy** of fluxplugin (`"fluxplugin": "file:../fluxplugin"`) whose `dist/` folder does not exist: it is created by the build, it is not part of the source.
+
+```bash
+cd path/to/fluxplugin
+pnpm install && pnpm build      # or: npm install && npm run build
+```
+
+Then run `npx fluxplugin …` again from your app. Alternatively `npm pack` (it builds first) and install the `.tgz`, or install the published package with `npm install fluxplugin`.
+Run `fluxplugin plugin new <name>` from the **app root** to create the plugin in `plugins/` (it then shares the app's dependencies); run it from inside `plugins/` and you get a standalone plugin project with its own `package.json` (run `npm install` in it).

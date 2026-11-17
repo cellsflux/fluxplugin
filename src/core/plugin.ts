@@ -207,6 +207,7 @@ export interface PluginInfo {
   conflicts?: string[];
   pricing?: PluginManifest["pricing"];
   features?: FeatureInfo[];
+  translations?: PluginManifest["translations"];
   dependencies: Record<string, string>;
   dependents: string[];
   activationEvents: string[];

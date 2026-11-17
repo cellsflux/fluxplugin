@@ -51,6 +51,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   clipboard: { title: "Use the clipboard", description: "Copy and paste for you.", consequence: "Off: no clipboard access.", sensitive: true },
   camera: { title: "Use the camera", description: "Take pictures and record video.", consequence: "Off: it cannot use the camera.", sensitive: true },
   shortcuts: { title: "Global keyboard shortcuts", description: "React to key combinations even when the app is in the background.", consequence: "Off: its global shortcuts stop working.", sensitive: true },
+  override: { title: "Replace parts of the interface", description: "Provide its own version of built-in components (menu bar, store, sidebar…).", consequence: "Off: its replacement components are ignored and the standard ones are used.", sensitive: true },
   shell: { title: "Run system commands", description: "Launch programs on your computer.", consequence: "Off: it cannot launch programs.", sensitive: true },
 };
 

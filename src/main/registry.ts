@@ -14,6 +14,8 @@ export type RegistryEntry = RegistryEntryLike;
  */
 export interface PluginRegistry {
   readonly name: string;
+  /** Name shown to users (never the URL). */
+  label?: string;
   search(query?: string): Promise<RegistryEntry[]>;
   /** Materializes a plugin into `destDir` (which does not exist yet). Returns its manifest. */
   fetch(entry: RegistryEntry, destDir: string): Promise<PluginManifest>;
@@ -349,6 +351,12 @@ export class PluginInstaller {
   /** Where plugins are installed. */
   get dir(): string {
     return this.pluginsDir;
+  }
+
+  /** The name a user may see for a store (never its URL). */
+  labelOf(source: string): string {
+    const r = this.registries.find((x) => x.name === source);
+    return r ? (r.label ?? r.name) : "Store";
   }
 
   addRegistry(r: PluginRegistry): void {

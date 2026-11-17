@@ -3,6 +3,7 @@ import { s } from "../core/index.js";
 import { Icon } from "./icons.js";
 import { useExtensionItems } from "./components.js";
 import { declareI18nPoints, useT } from "./i18n.js";
+import { declareOverridePoint } from "./overrides.js";
 import type { RendererFramework } from "./runtime.js";
 
 export type ThemeMode = "light" | "dark" | "system";
@@ -66,6 +67,7 @@ export function declareHostPoints(framework: RendererFramework): void {
     });
   }
   declareI18nPoints(framework);
+  declareOverridePoint(framework);
 }
 
 /* ---------------------------------------------------------------- appearance */

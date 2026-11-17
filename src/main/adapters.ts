@@ -93,6 +93,11 @@ export function registerPluginProtocol(
   protocol: { handle(scheme: string, handler: (req: { url: string; headers?: { get(name: string): string | null } }) => Promise<Response> | Response): void },
 ): void {
   protocol.handle(PLUGIN_SCHEME.scheme, async (req) => {
+    const u = new URL(req.url);
+    if (u.host === "_store") {
+      const a = await fw.serveStoreAsset(u.pathname.replace(/^\//, ""));
+      return new Response(a.body ? new Uint8Array(a.body) : null, { status: a.status, headers: a.headers });
+    }
     const r = await resolvePluginAsset(fw, req.url);
     if (!r) return new Response("Not found", { status: 404 });
     const a = await readAsset(r.file, r.mime, req.headers?.get("range"));
@@ -164,6 +169,11 @@ export function attachHttp(fw: MainFramework, opts: HttpAdapterOptions = {}): Pr
         const rest = url.pathname.slice(prefix.length + 1);
         const slash = rest.indexOf("/");
         const id = decodeURIComponent(rest.slice(0, slash));
+        if (id === "_store") {
+          const a = await fw.serveStoreAsset(rest.slice(slash + 1));
+          res.writeHead(a.status, a.headers);
+          return res.end(a.body);
+        }
         const r = await resolvePluginAsset(fw, `fluxplugin://${encodeURIComponent(id)}/${rest.slice(slash + 1)}`);
         if (!r) return json(res, 404, { error: "not found" });
         const a = await readAsset(r.file, r.mime, req.headers.range);
